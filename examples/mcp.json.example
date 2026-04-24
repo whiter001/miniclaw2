@@ -1,0 +1,81 @@
+{
+  "tools": {
+    "mmx_search": {
+      "type": "command",
+      "description": "Search the web via MiniMax CLI.",
+      "command": "mmx",
+      "args": ["search", "query", "--q", "{{query}}", "--output", "json", "--quiet", "--non-interactive", "--region", "{{MINICLAW_REGION}}", "--api-key", "{{MINICLAW_API_KEY}}"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query string."
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    "mmx_image": {
+      "type": "command",
+      "description": "Generate images via MiniMax CLI.",
+      "command": "mmx",
+      "args": ["image", "generate", "--prompt", "{{prompt}}", "--output", "json", "--quiet", "--non-interactive", "--region", "{{MINICLAW_REGION}}", "--api-key", "{{MINICLAW_API_KEY}}"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Text prompt for image generation."
+          }
+        },
+        "required": ["prompt"]
+      }
+    },
+    "mmx_vision_describe": {
+      "type": "command",
+      "description": "Describe an image via MiniMax CLI vision describe.",
+      "command": "mmx",
+      "args": ["vision", "describe", "--image", "{{image_source}}", "--prompt", "{{prompt}}", "--output", "json", "--quiet", "--non-interactive", "--region", "{{MINICLAW_REGION}}", "--api-key", "{{MINICLAW_API_KEY}}"],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "image_source": {
+            "type": "string",
+            "description": "Local path, URL, or data URL for the image."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Question or instruction for the image."
+          }
+        },
+        "required": ["image_source", "prompt"]
+      }
+    },
+    "mmx_quota": {
+      "type": "command",
+      "description": "Show MiniMax CLI quota information.",
+      "command": "mmx",
+      "args": ["quota", "show", "--output", "json", "--quiet", "--non-interactive", "--region", "{{MINICLAW_REGION}}", "--api-key", "{{MINICLAW_API_KEY}}"],
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  "servers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "env": {
+        "DEFAULT_MINIMUM_TOKENS": "10000"
+      }
+    }
+  }
+}

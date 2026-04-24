@@ -1,0 +1,25 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+miniclaw
+miniclaw.exe
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+/internal/gateway/qq/state/*.jsonl
+/internal/gateway/qq/state/*.txt
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+
+!cmd/*
