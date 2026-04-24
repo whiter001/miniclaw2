@@ -16,6 +16,7 @@ max_tool_iterations=100
 enable_mcp=false
 mcp_base_path=
 mcp_resource_mode=url
+gateway_channel=qq
 
 qq_app_id=
 qq_token=
@@ -28,6 +29,13 @@ qq_auth_callback_path=/qq-callback
 qq_allow_users=
 qq_allow_groups=
 qq_processing_text=收到，处理中，请稍候。
+
+weixin_api_base=https://ilinkai.weixin.qq.com
+weixin_cdn_base=https://novac2c.cdn.weixin.qq.com/c2c
+weixin_token=
+weixin_account_id=
+weixin_allow_users=
+weixin_processing_text=收到，处理中，请稍候。
 
 memory_recent_days=2
 memory_recent_chars=1600

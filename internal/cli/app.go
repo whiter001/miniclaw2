@@ -5,11 +5,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"miniclaw2/internal/config"
-	qqgateway "miniclaw2/internal/gateway/qq"
+	"miniclaw2/internal/gateway"
+	"miniclaw2/internal/gateway/weixin"
 	"miniclaw2/internal/memory"
 	"miniclaw2/internal/provider/minimax"
 	"miniclaw2/internal/session"
@@ -68,6 +72,11 @@ func applyCommandConfigOverrides(cfg *config.Config, args []string) {
 			}
 		case "--mcp":
 			cfg.EnableMCP = true
+		case "--channel":
+			if i+1 < len(args) {
+				cfg.GatewayChannel = gateway.NormalizeChannelName(args[i+1])
+				i++
+			}
 		case "--webhook-port":
 			if i+1 < len(args) {
 				if port, err := strconv.Atoi(args[i+1]); err == nil {
@@ -85,7 +94,10 @@ func printHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  miniclaw onboard              Initialize config and workspace")
 	fmt.Println("  miniclaw status               Show current configuration status")
-	fmt.Println("  miniclaw gateway [--once] [--webhook-port PORT]   Start QQ gateway bootstrap or webhook server")
+	fmt.Println("  miniclaw gateway [--channel qq|weixin] [--once] [--webhook-port PORT]   Start gateway bootstrap or channel runner")
+	fmt.Println("  miniclaw gateway login [--channel weixin] [--verbose]   Login and save a Weixin account")
+	fmt.Println("  miniclaw gateway accounts [--channel weixin] [--use ACCOUNT]   List or activate Weixin accounts")
+	fmt.Println("  miniclaw gateway logout [--channel weixin] [--account ACCOUNT]   Remove a Weixin account")
 	fmt.Println("  miniclaw agent [-p PROMPT] [--workspace PATH] [--mcp]    Run agent")
 	fmt.Println("  miniclaw memory [show|set|append|today|summarize|compact|prune|clear]    Manage memory files")
 	fmt.Println("  miniclaw --version            Show version")
@@ -101,8 +113,13 @@ func printHelp() {
 	fmt.Println("  MINICLAW_ENABLE_MCP")
 	fmt.Println("  MINICLAW_MCP_BASE_PATH")
 	fmt.Println("  MINICLAW_MCP_RESOURCE_MODE")
+	fmt.Println("  MINICLAW_GATEWAY_CHANNEL")
 	fmt.Println("  MINICLAW_QQ_APP_ID")
 	fmt.Println("  MINICLAW_QQ_APP_SECRET")
+	fmt.Println("  MINICLAW_WEIXIN_API_BASE")
+	fmt.Println("  MINICLAW_WEIXIN_CDN_BASE")
+	fmt.Println("  MINICLAW_WEIXIN_TOKEN")
+	fmt.Println("  MINICLAW_WEIXIN_ACCOUNT_ID")
 }
 
 func runOnboard(cfg config.Config) int {
@@ -129,63 +146,200 @@ func runOnboard(cfg config.Config) int {
 }
 
 func runStatus(cfg config.Config) int {
+	accountIDs, _ := weixin.ListAccountIDs(cfg)
+	activeWeixinAccount := weixin.LoadActiveAccountID(cfg)
+	weixinConfigured := strings.TrimSpace(cfg.WeixinToken) != "" || len(accountIDs) > 0
 	fmt.Println("MiniClaw status")
 	fmt.Println("version: " + Version)
 	fmt.Println("config: " + cfg.ConfigPath)
 	fmt.Println("mcp config: " + cfg.MCPConfigPath)
 	fmt.Println("home: " + cfg.HomeDir)
 	fmt.Println("workspace: " + cfg.Workspace)
+	fmt.Println("gateway channel: " + gateway.NormalizeChannelName(cfg.GatewayChannel))
 	fmt.Printf("api configured: %t\n", cfg.APIKey != "")
 	fmt.Printf("mcp enabled: %t\n", cfg.EnableMCP)
 	fmt.Printf("qq configured: %t\n", cfg.QQAppID != "" && cfg.QQAppSecret != "")
+	fmt.Printf("weixin configured: %t\n", weixinConfigured)
 	fmt.Printf("qq token configured: %t\n", cfg.QQToken != "")
 	fmt.Println("qq webhook: " + cfg.QQWebhookURL())
 	fmt.Println("qq auth callback: " + cfg.QQAuthCallbackURL())
 	fmt.Println("qq allow users: " + cfg.QQAllowUsers)
 	fmt.Println("qq allow groups: " + cfg.QQAllowGroups)
+	fmt.Println("weixin api base: " + cfg.WeixinAPIBase)
+	fmt.Println("weixin cdn base: " + cfg.WeixinCDNBase)
+	fmt.Println("weixin active account: " + activeWeixinAccount)
+	fmt.Printf("weixin stored accounts: %d\n", len(accountIDs))
+	fmt.Println("weixin allow users: " + cfg.WeixinAllowUsers)
 	_, err := os.Stat(cfg.Workspace)
 	fmt.Printf("workspace ready: %t\n", err == nil)
 	return 0
 }
 
 func runGateway(cfg config.Config, args []string) int {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "login":
+			return runGatewayLogin(cfg, args[1:])
+		case "accounts":
+			return runGatewayAccounts(cfg, args[1:])
+		case "logout":
+			return runGatewayLogout(cfg, args[1:])
+		default:
+			fmt.Fprintf(os.Stderr, "unknown gateway subcommand: %s\n", args[0])
+			fmt.Fprintln(os.Stderr, "usage: miniclaw gateway [login|accounts|logout] [flags]")
+			return 1
+		}
+	}
 	if ensureRuntimeReady(cfg) != 0 {
 		return 1
 	}
-	if strings.TrimSpace(cfg.QQAppID) == "" || strings.TrimSpace(cfg.QQAppSecret) == "" {
-		fmt.Fprintln(os.Stderr, "QQ gateway is not configured yet.")
-		fmt.Fprintln(os.Stderr, "set qq_app_id and qq_app_secret in ~/.config/miniclaw/config before enabling QQ integration.")
-		return 1
-	}
-	token, err := qqgateway.FetchAccessToken(context.Background(), cfg)
+	runner, err := gateway.Resolve(cfg.GatewayChannel)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
-	profile, err := qqgateway.FetchBotProfile(context.Background(), cfg, token.AccessToken)
+	lines, err := runner.Bootstrap(context.Background(), cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
-	statePath, err := qqgateway.WriteGatewayState(cfg, token, profile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to persist qq gateway state: %v\n", err)
-		return 1
+	for _, line := range lines {
+		fmt.Println(line)
 	}
-	fmt.Println("QQ gateway bootstrap ok.")
-	fmt.Println("bot id: " + profile.ID)
-	fmt.Println("bot name: " + profile.Username)
-	fmt.Println("state: " + statePath)
 	if hasFlag(args, "--once") {
 		fmt.Println("bootstrap-only mode finished.")
 		return 0
 	}
-	fmt.Println("starting local webhook server on " + cfg.QQWebhookURL())
-	fmt.Println("next step: bind this handler to a public HTTPS address or tunnel for QQ callback verification.")
-	if err := qqgateway.StartWebhookServer(cfg); err != nil {
+	for _, line := range runner.StartMessages(cfg) {
+		fmt.Println(line)
+	}
+	if err := runner.Start(context.Background(), cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
+	return 0
+}
+
+func runGatewayLogin(cfg config.Config, args []string) int {
+	if ensureRuntimeReady(cfg) != 0 {
+		return 1
+	}
+	ensureWeixinGatewayChannel(&cfg)
+	if gateway.NormalizeChannelName(cfg.GatewayChannel) != "weixin" {
+		fmt.Fprintln(os.Stderr, "gateway login currently only supports --channel weixin")
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := weixin.LoginWithQR(ctx, cfg, weixin.QRLoginOptions{
+		Verbose: hasFlag(args, "--verbose"),
+		Logf:    func(line string) { fmt.Println(line) },
+		Timeout: parseOptionalDuration(args, "--timeout"),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	if result.QRCodeURL != "" {
+		fmt.Println("qrcode url: " + result.QRCodeURL)
+	}
+	fmt.Println("weixin account saved: " + result.AccountID)
+	if result.UserID != "" {
+		fmt.Println("user id: " + result.UserID)
+	}
+	if result.BaseURL != "" {
+		fmt.Println("api base: " + result.BaseURL)
+	}
+	return 0
+}
+
+func runGatewayAccounts(cfg config.Config, args []string) int {
+	if ensureRuntimeReady(cfg) != 0 {
+		return 1
+	}
+	ensureWeixinGatewayChannel(&cfg)
+	if gateway.NormalizeChannelName(cfg.GatewayChannel) != "weixin" {
+		fmt.Fprintln(os.Stderr, "gateway accounts currently only supports --channel weixin")
+		return 1
+	}
+	ids, err := weixin.ListAccountIDs(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to list weixin accounts: %v\n", err)
+		return 1
+	}
+	requested := weixin.NormalizeAccountID(flagValue(args, "--use"))
+	if requested != "" {
+		if !containsString(ids, requested) {
+			fmt.Fprintf(os.Stderr, "unknown weixin account: %s\n", requested)
+			return 1
+		}
+		if err := weixin.SetActiveAccountID(cfg, requested); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to activate weixin account: %v\n", err)
+			return 1
+		}
+		fmt.Println("active weixin account: " + requested)
+	}
+	if len(ids) == 0 {
+		fmt.Println("no weixin accounts configured.")
+		fmt.Println("run `miniclaw gateway login --channel weixin` first.")
+		return 0
+	}
+	active := weixin.LoadActiveAccountID(cfg)
+	for _, id := range ids {
+		marker := "-"
+		if id == active {
+			marker = "*"
+		}
+		data, err := weixin.LoadAccount(cfg, id)
+		if err != nil {
+			fmt.Printf("%s %s\n", marker, id)
+			continue
+		}
+		details := []string{}
+		if strings.TrimSpace(data.UserID) != "" {
+			details = append(details, "user_id="+strings.TrimSpace(data.UserID))
+		}
+		if strings.TrimSpace(data.BaseURL) != "" {
+			details = append(details, "base="+strings.TrimSpace(data.BaseURL))
+		}
+		if strings.TrimSpace(data.SavedAt) != "" {
+			details = append(details, "saved_at="+strings.TrimSpace(data.SavedAt))
+		}
+		if len(details) == 0 {
+			fmt.Printf("%s %s\n", marker, id)
+			continue
+		}
+		fmt.Printf("%s %s (%s)\n", marker, id, strings.Join(details, ", "))
+	}
+	return 0
+}
+
+func runGatewayLogout(cfg config.Config, args []string) int {
+	if ensureRuntimeReady(cfg) != 0 {
+		return 1
+	}
+	ensureWeixinGatewayChannel(&cfg)
+	if gateway.NormalizeChannelName(cfg.GatewayChannel) != "weixin" {
+		fmt.Fprintln(os.Stderr, "gateway logout currently only supports --channel weixin")
+		return 1
+	}
+	target, err := resolveWeixinAccountID(cfg, flagValue(args, "--account"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	if err := weixin.ClearAccount(cfg, target); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to remove weixin account: %v\n", err)
+		return 1
+	}
+	remaining, err := weixin.ListAccountIDs(cfg)
+	if err == nil && len(remaining) > 0 {
+		active := weixin.LoadActiveAccountID(cfg)
+		if active == "" || active == target {
+			_ = weixin.SetActiveAccountID(cfg, remaining[0])
+		}
+	}
+	fmt.Println("removed weixin account: " + target)
 	return 0
 }
 
@@ -387,9 +541,77 @@ func parseOptionalPositiveIntArgs(args []string) int {
 	return 0
 }
 
+func parseOptionalDuration(args []string, flag string) time.Duration {
+	value := flagValue(args, flag)
+	if strings.TrimSpace(value) == "" {
+		return 0
+	}
+	if duration, err := time.ParseDuration(value); err == nil {
+		return duration
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func hasFlag(args []string, flag string) bool {
 	for _, arg := range args {
 		if arg == flag {
+			return true
+		}
+	}
+	return false
+}
+
+func flagValue(args []string, flag string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func ensureWeixinGatewayChannel(cfg *config.Config) {
+	channel := gateway.NormalizeChannelName(cfg.GatewayChannel)
+	if channel == "" || channel == "qq" {
+		cfg.GatewayChannel = "weixin"
+	}
+}
+
+func resolveWeixinAccountID(cfg config.Config, requested string) (string, error) {
+	selected := weixin.NormalizeAccountID(strings.TrimSpace(requested))
+	if selected == "" {
+		selected = weixin.NormalizeAccountID(strings.TrimSpace(cfg.WeixinAccountID))
+	}
+	if selected == "" {
+		selected = weixin.LoadActiveAccountID(cfg)
+	}
+	ids, err := weixin.ListAccountIDs(cfg)
+	if err != nil {
+		return "", err
+	}
+	if selected == "" {
+		switch len(ids) {
+		case 0:
+			return "", fmt.Errorf("no weixin accounts configured")
+		case 1:
+			return ids[0], nil
+		default:
+			return "", fmt.Errorf("multiple weixin accounts are registered; use --account to choose one")
+		}
+	}
+	if !containsString(ids, selected) {
+		return "", fmt.Errorf("unknown weixin account: %s", selected)
+	}
+	return selected, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
 			return true
 		}
 	}

@@ -9,19 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"miniclaw2/internal/config"
-	"miniclaw2/internal/provider/minimax"
-	"miniclaw2/internal/session"
+	gatewayruntime "miniclaw2/internal/gateway/runtime"
 )
-
-var eventLogMu sync.Mutex
-var seenMessageMu sync.Mutex
 
 type WebhookHandler struct {
 	Config config.Config
@@ -141,47 +135,36 @@ func HandleMessageEvent(ctx context.Context, cfg config.Config, payload []byte) 
 	if err != nil || target.Scene == "" {
 		return err
 	}
+	message := gatewayruntime.TextMessage{
+		Channel:   "qq",
+		Scene:     target.Scene,
+		MessageID: target.MsgID,
+		Payload: map[string]any{
+			"scene":  target.Scene,
+			"msg_id": target.MsgID,
+		},
+	}
 	if !IsTargetAllowed(cfg, target) {
-		return AppendEventLog(cfg, "event_blocked", []byte(fmt.Sprintf(`{"scene":%q,"msg_id":%q}`, target.Scene, target.MsgID)))
-	}
-	seen, err := MarkMessageSeen(cfg, target.MsgID)
-	if err != nil {
-		return err
-	}
-	if !seen {
-		return AppendEventLog(cfg, "event_duplicate", []byte(fmt.Sprintf(`{"scene":%q,"msg_id":%q}`, target.Scene, target.MsgID)))
+		return gatewayruntime.AppendEventLog(cfg, "qq", "event_blocked", message.Payload)
 	}
 	prompt, err := ExtractEventPrompt(payload)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(prompt) == "" {
-		return nil
-	}
+	message.Prompt = prompt
 	token, err := FetchAccessToken(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(cfg.QQProcessingText) != "" {
-		if _, err := SendReply(ctx, cfg, token.AccessToken, target, cfg.QQProcessingText, 1); err != nil {
-			_ = AppendEventLog(cfg, "reply_placeholder_error", []byte(fmt.Sprintf(`{"scene":%q,"msg_id":%q,"error":%q}`, target.Scene, target.MsgID, err.Error())))
-		}
-	}
-	recorder, err := session.New(cfg.Workspace)
-	if err != nil {
-		return err
-	}
-	response, err := minimax.RunAgentInSession(ctx, cfg, prompt, recorder)
-	if err != nil {
-		failureMessage := BuildFailureMessage(err.Error())
-		_ = AppendAgentErrorLog(cfg, target, recorder.SessionID, prompt, err.Error())
-		_, _ = SendReply(ctx, cfg, token.AccessToken, target, failureMessage, 2)
-		return err
-	}
-	if _, err := SendReply(ctx, cfg, token.AccessToken, target, response, 2); err != nil {
-		return err
-	}
-	return AppendEventLog(cfg, "reply_sent", []byte(fmt.Sprintf(`{"scene":%q,"msg_id":%q,"content":%q}`, target.Scene, target.MsgID, response)))
+	return gatewayruntime.ProcessTextMessage(ctx, gatewayruntime.ProcessOptions{
+		Config:         cfg,
+		Message:        message,
+		ProcessingText: cfg.QQProcessingText,
+		SendReply: func(ctx context.Context, content string, sequence int) error {
+			_, err := SendReply(ctx, cfg, token.AccessToken, target, content, sequence)
+			return err
+		},
+	})
 }
 
 func BuildValidationResponse(cfg config.Config, payload []byte) ([]byte, error) {
@@ -236,79 +219,23 @@ func ExtractEventPrompt(payload []byte) (string, error) {
 }
 
 func MarkMessageSeen(cfg config.Config, msgID string) (bool, error) {
-	trimmedID := strings.TrimSpace(msgID)
-	if trimmedID == "" {
-		return true, nil
-	}
-	path := filepath.Join(cfg.Workspace, "state", "qq_seen_message_ids.txt")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, err
-	}
-	seenMessageMu.Lock()
-	defer seenMessageMu.Unlock()
-	data, _ := os.ReadFile(path)
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == trimmedID {
-			return false, nil
-		}
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return false, err
-	}
-	defer file.Close()
-	if _, err := file.WriteString(trimmedID + "\n"); err != nil {
-		return false, err
-	}
-	return true, nil
+	return gatewayruntime.MarkMessageSeen(cfg, "qq", msgID)
 }
 
 func AppendAgentErrorLog(cfg config.Config, target ReplyTarget, sessionID, prompt, errorMessage string) error {
-	kind := "event_error"
-	if strings.Contains(errorMessage, minimax.ToolIterationErrorPrefix) {
-		kind = "event_tool_iteration_limit"
-	}
-	payload := []byte(fmt.Sprintf(`{"scene":%q,"msg_id":%q,"session_id":%q,"prompt":%q,"error":%q}`, target.Scene, target.MsgID, sessionID, limitErrorPreview(prompt), errorMessage))
-	return AppendEventLog(cfg, kind, payload)
+	return gatewayruntime.AppendAgentErrorLog(cfg, "qq", gatewayruntime.TextMessage{
+		Channel:   "qq",
+		Scene:     target.Scene,
+		MessageID: target.MsgID,
+		Payload: map[string]any{
+			"scene":  target.Scene,
+			"msg_id": target.MsgID,
+		},
+	}, sessionID, prompt, errorMessage)
 }
 
 func AppendEventLog(cfg config.Config, kind string, payload []byte) error {
-	path := filepath.Join(cfg.Workspace, "state", "qq_webhook_events.jsonl")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	entry := map[string]any{"ts": time.Now().Format(time.RFC3339Nano), "kind": kind}
-	if json.Valid(payload) {
-		entry["payload"] = json.RawMessage(payload)
-	} else {
-		entry["payload"] = string(payload)
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-	eventLogMu.Lock()
-	defer eventLogMu.Unlock()
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	return nil
-}
-
-func limitErrorPreview(value string) string {
-	preview := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\n", " "), "\r", " "))
-	if preview == "" {
-		return ""
-	}
-	if len(preview) > 120 {
-		return preview[:120] + "..."
-	}
-	return preview
+	return gatewayruntime.AppendEventLog(cfg, "qq", kind, payload)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

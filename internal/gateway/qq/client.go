@@ -18,7 +18,7 @@ import (
 	"crypto/ed25519"
 
 	"miniclaw2/internal/config"
-	"miniclaw2/internal/provider/minimax"
+	gatewayruntime "miniclaw2/internal/gateway/runtime"
 )
 
 const accessTokenURL = "https://bots.qq.com/app/getAppAccessToken"
@@ -217,10 +217,7 @@ func CSVContainsValue(csv, value string) bool {
 }
 
 func BuildFailureMessage(errorMessage string) string {
-	if strings.Contains(errorMessage, minimax.ToolIterationErrorPrefix) {
-		return "这个问题触发了过多工具调用，我没能在限定步数内完成。请把问题拆小一点，或直接说明要查看的文件、目录或命令。"
-	}
-	return "处理失败，请稍后重试。"
+	return gatewayruntime.BuildFailureMessage(errorMessage)
 }
 
 func SignValidation(secret, eventTS, plainToken string) (string, error) {

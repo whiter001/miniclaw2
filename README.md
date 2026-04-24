@@ -6,7 +6,7 @@
 - MiniMax Anthropic-compatible `messages` 调用
 - 多轮工具循环：`list_dir`、`read_file`、`write_file`、`exec`、`grep_search`
 - workspace / session / memory 持久化
-- QQ gateway / webhook / 白名单 / 去重 / 处理中占位回复
+- 多通道 gateway：QQ webhook + Weixin 长轮询
 - 内建原生 MCP：`web_search`、`understand_image`
 - 可选 stdio MCP 与命令型外部工具扩展（读取 `mcp_config_path` 指向的 JSON 配置）
 
@@ -28,6 +28,7 @@
 - 本地工具执行与安全边界
 - MiniMax Agent loop
 - QQ bootstrap / webhook / 事件处理
+- Weixin 兼容 openclaw-weixin backend API 的长轮询、登录和媒体回复基础能力
 - 原生 MCP manager + 内建 MCP 工具
 - 基础单元测试
 
@@ -50,7 +51,7 @@ go build -o miniclaw.exe ./cmd/miniclaw
 1. 构建二进制
 2. 运行 `miniclaw onboard`
 3. 编辑 `~/.config/miniclaw/config`
-4. 配置 `api_key` 和 QQ 相关字段
+4. 配置 `api_key` 和你要启用的 gateway 通道字段
 5. 运行 `miniclaw status` 检查状态
 
 常用命令：
@@ -61,6 +62,9 @@ miniclaw status
 miniclaw agent -p "hello"
 miniclaw memory show
 miniclaw gateway --once
+miniclaw gateway --channel weixin
+miniclaw gateway login --channel weixin
+miniclaw gateway accounts
 ```
 
 ## 配置文件
@@ -182,7 +186,16 @@ mmx auth login --api-key sk-xxxxx
 
 如果你想固定宽高比、批量张数或输出目录，也可以在这个示例基础上自行复制一份工具定义，并在 `args` 里追加固定参数，例如 `--aspect-ratio 16:9`、`--n 3`、`--out-dir ./minimax-output`。
 
-## QQ Gateway
+## Gateway Channels
+
+当前 `gateway` 命令支持按通道启动：
+
+- `miniclaw gateway --channel qq`
+- `miniclaw gateway --channel weixin`
+
+如果没有显式传 `--channel`，则使用配置里的 `gateway_channel`，默认值是 `qq`。
+
+### QQ Gateway
 
 支持：
 
@@ -203,6 +216,50 @@ miniclaw gateway
 ```
 
 `--once` 只做 bootstrap，不启动本地 webhook 服务。
+
+### Weixin Gateway
+
+当前微信通道目标是对齐 `@tencent-weixin/openclaw-weixin` 的 backend API 协议，而不是复刻它的 Node 插件宿主。
+
+当前支持：
+
+- `ilink/bot/getupdates` 长轮询收消息
+- `ilink/bot/sendmessage` 文本回复
+- `ilink/bot/getuploadurl` + CDN 上传的图片 / 视频 / 文件回复
+- 二维码登录与 token 持久化
+- 多账号保存、激活、删除
+- 用户白名单
+- 去重 / 会话记录 / 处理中占位回复
+
+当前仍未实现：
+
+- typing 状态
+- 更细粒度的多账号路由策略
+- 非文本入站消息的完整解析
+
+配置项：
+
+- `gateway_channel=weixin`
+- `weixin_api_base=https://ilinkai.weixin.qq.com`
+- `weixin_cdn_base=https://novac2c.cdn.weixin.qq.com/c2c`
+- `weixin_token=...` 或先执行二维码登录
+- `weixin_account_id=bot-1`
+- `weixin_allow_users=u1,u2`
+
+启动方式：
+
+```powershell
+miniclaw gateway login --channel weixin
+miniclaw gateway accounts
+miniclaw gateway --channel weixin --once
+miniclaw gateway --channel weixin
+```
+
+说明：
+
+如果 agent 最终回复里包含 `MEDIA:/absolute/path/to/file` 或 `MEDIA:https://...` 行，当前实现会先发文本说明，再上传并发送媒体消息。
+
+这个实现依赖兼容 `openclaw-weixin` backend API 的服务端接口。仓库当前已包含 Go 侧二维码登录、账号持久化和基础媒体上传，但不包含独立的微信托管后端。
 
 ## 开发说明
 

@@ -33,3 +33,20 @@ func TestParseContentAppliesAnthropicBaseURLAliases(t *testing.T) {
 		t.Fatalf("unexpected api_url value: %s", fromLegacy.BaseURL)
 	}
 }
+
+func TestParseContentAppliesGatewayChannelSettings(t *testing.T) {
+	base := Default()
+	content := `
+gateway_channel=weixin
+weixin_api_base=https://weixin.example.test
+weixin_cdn_base=https://cdn.example.test
+weixin_token=token-1
+weixin_account_id=bot-1
+weixin_allow_users=u-1,u-2
+weixin_processing_text=处理中
+`
+	cfg := ParseContent(content, base)
+	if cfg.GatewayChannel != "weixin" || cfg.WeixinAPIBase != "https://weixin.example.test" || cfg.WeixinCDNBase != "https://cdn.example.test" || cfg.WeixinToken != "token-1" || cfg.WeixinAccountID != "bot-1" || cfg.WeixinAllowUsers != "u-1,u-2" || cfg.WeixinProcessingText != "处理中" {
+		t.Fatalf("unexpected gateway config: %+v", cfg)
+	}
+}

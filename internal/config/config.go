@@ -22,6 +22,7 @@ type Config struct {
 	EnableMCP                   bool
 	MCPBasePath                 string
 	MCPResourceMode             string
+	GatewayChannel              string
 	QQAppID                     string
 	QQToken                     string
 	QQAppSecret                 string
@@ -33,6 +34,12 @@ type Config struct {
 	QQAllowUsers                string
 	QQAllowGroups               string
 	QQProcessingText            string
+	WeixinAPIBase               string
+	WeixinCDNBase               string
+	WeixinToken                 string
+	WeixinAccountID             string
+	WeixinAllowUsers            string
+	WeixinProcessingText        string
 	MaxToolIterations           int
 	MemoryRecentDays            int
 	MemoryRecentChars           int
@@ -59,6 +66,7 @@ func Default() Config {
 		EnableMCP:                   false,
 		MCPBasePath:                 "",
 		MCPResourceMode:             "url",
+		GatewayChannel:              "qq",
 		QQAppID:                     "",
 		QQToken:                     "",
 		QQAppSecret:                 "",
@@ -70,6 +78,12 @@ func Default() Config {
 		QQAllowUsers:                "",
 		QQAllowGroups:               "",
 		QQProcessingText:            "收到，处理中，请稍候。",
+		WeixinAPIBase:               "https://ilinkai.weixin.qq.com",
+		WeixinCDNBase:               "https://novac2c.cdn.weixin.qq.com/c2c",
+		WeixinToken:                 "",
+		WeixinAccountID:             "",
+		WeixinAllowUsers:            "",
+		WeixinProcessingText:        "收到，处理中，请稍候。",
 		MaxToolIterations:           100,
 		MemoryRecentDays:            2,
 		MemoryRecentChars:           1600,
@@ -152,6 +166,13 @@ func ApplyEnvOverrides(cfg *Config) {
 	applyEnvBool("MINICLAW_ENABLE_MCP", &cfg.EnableMCP)
 	applyEnvString("MINICLAW_MCP_BASE_PATH", &cfg.MCPBasePath, true)
 	applyEnvString("MINICLAW_MCP_RESOURCE_MODE", &cfg.MCPResourceMode, false)
+	applyEnvString("MINICLAW_GATEWAY_CHANNEL", &cfg.GatewayChannel, false)
+	applyEnvString("MINICLAW_WEIXIN_API_BASE", &cfg.WeixinAPIBase, false)
+	applyEnvString("MINICLAW_WEIXIN_CDN_BASE", &cfg.WeixinCDNBase, false)
+	applyEnvString("MINICLAW_WEIXIN_TOKEN", &cfg.WeixinToken, false)
+	applyEnvString("MINICLAW_WEIXIN_ACCOUNT_ID", &cfg.WeixinAccountID, false)
+	applyEnvString("MINICLAW_WEIXIN_ALLOW_USERS", &cfg.WeixinAllowUsers, false)
+	applyEnvString("MINICLAW_WEIXIN_PROCESSING_TEXT", &cfg.WeixinProcessingText, false)
 
 	cfg.HomeDir = ExpandHomePath(cfg.HomeDir)
 	cfg.Workspace = ExpandHomePath(cfg.Workspace)
@@ -187,6 +208,7 @@ func WriteDefault(cfg Config) error {
 		"enable_mcp=" + strconv.FormatBool(cfg.EnableMCP),
 		"mcp_base_path=" + cfg.MCPBasePath,
 		"mcp_resource_mode=" + cfg.MCPResourceMode,
+		"gateway_channel=" + cfg.GatewayChannel,
 		"qq_app_id=",
 		"qq_token=",
 		"qq_app_secret=",
@@ -198,6 +220,12 @@ func WriteDefault(cfg Config) error {
 		"qq_allow_users=" + cfg.QQAllowUsers,
 		"qq_allow_groups=" + cfg.QQAllowGroups,
 		"qq_processing_text=" + cfg.QQProcessingText,
+		"weixin_api_base=" + cfg.WeixinAPIBase,
+		"weixin_cdn_base=" + cfg.WeixinCDNBase,
+		"weixin_token=",
+		"weixin_account_id=" + cfg.WeixinAccountID,
+		"weixin_allow_users=" + cfg.WeixinAllowUsers,
+		"weixin_processing_text=" + cfg.WeixinProcessingText,
 		"memory_recent_days=" + strconv.Itoa(cfg.MemoryRecentDays),
 		"memory_recent_chars=" + strconv.Itoa(cfg.MemoryRecentChars),
 		"memory_summary_max_lines=" + strconv.Itoa(cfg.MemorySummaryMaxLines),
@@ -294,6 +322,8 @@ func applyConfigValue(cfg *Config, key, value string) {
 		cfg.MCPBasePath = value
 	case "mcp_resource_mode":
 		cfg.MCPResourceMode = value
+	case "gateway_channel":
+		cfg.GatewayChannel = value
 	case "qq_app_id":
 		cfg.QQAppID = value
 	case "qq_token":
@@ -318,6 +348,18 @@ func applyConfigValue(cfg *Config, key, value string) {
 		cfg.QQAllowGroups = value
 	case "qq_processing_text":
 		cfg.QQProcessingText = value
+	case "weixin_api_base":
+		cfg.WeixinAPIBase = value
+	case "weixin_cdn_base":
+		cfg.WeixinCDNBase = value
+	case "weixin_token":
+		cfg.WeixinToken = value
+	case "weixin_account_id":
+		cfg.WeixinAccountID = value
+	case "weixin_allow_users":
+		cfg.WeixinAllowUsers = value
+	case "weixin_processing_text":
+		cfg.WeixinProcessingText = value
 	}
 }
 
