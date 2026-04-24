@@ -1,0 +1,15 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates curl nodejs npm tzdata \
+    && update-ca-certificates \
+    && npm install -g mmx-cli
+
+WORKDIR /opt/miniclaw
+
+COPY miniclaw /usr/local/bin/miniclaw
+COPY examples/mcp.mmx.json.example /etc/miniclaw/mcp.json
+COPY .env.example /etc/miniclaw/miniclaw.env.example
+
+ENV MINICLAW_MCP_CONFIG_PATH=/etc/miniclaw/mcp.json
+
+ENTRYPOINT ["/usr/local/bin/miniclaw"]
