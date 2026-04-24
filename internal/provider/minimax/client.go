@@ -173,10 +173,16 @@ func (c *Client) send(ctx context.Context, cfg config.Config, body requestBody) 
 func ResolveAnthropicMessagesURL(apiURL string) string {
 	trimmed := strings.TrimRight(strings.TrimSpace(apiURL), "/")
 	if strings.HasSuffix(trimmed, "/messages") {
+		if strings.HasSuffix(trimmed, "/anthropic/messages") {
+			return strings.TrimSuffix(trimmed, "/messages") + "/v1/messages"
+		}
 		return trimmed
 	}
-	if strings.HasSuffix(trimmed, "/anthropic") || strings.HasSuffix(trimmed, "/anthropic/v1") {
+	if strings.HasSuffix(trimmed, "/anthropic/v1") {
 		return trimmed + "/messages"
+	}
+	if strings.HasSuffix(trimmed, "/anthropic") {
+		return trimmed + "/v1/messages"
 	}
 	return trimmed
 }

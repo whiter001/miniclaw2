@@ -1,6 +1,8 @@
 package config
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestParseContentAppliesMemorySettings(t *testing.T) {
 	base := Default()
@@ -48,5 +50,35 @@ weixin_processing_text=处理中
 	cfg := ParseContent(content, base)
 	if cfg.GatewayChannel != "weixin" || cfg.WeixinAPIBase != "https://weixin.example.test" || cfg.WeixinCDNBase != "https://cdn.example.test" || cfg.WeixinToken != "token-1" || cfg.WeixinAccountID != "bot-1" || cfg.WeixinAllowUsers != "u-1,u-2" || cfg.WeixinProcessingText != "处理中" {
 		t.Fatalf("unexpected gateway config: %+v", cfg)
+	}
+}
+
+func TestApplyEnvOverridesIgnoresEmptyLegacyAPIURL(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://api.example.test/anthropic")
+	t.Setenv("MINICLAW_API_URL", "")
+
+	cfg := Default()
+	ApplyEnvOverrides(&cfg)
+
+	if cfg.BaseURL != "https://api.example.test/anthropic" {
+		t.Fatalf("unexpected base url: %s", cfg.BaseURL)
+	}
+}
+
+func TestApplyEnvOverridesIgnoresEmptyStringValues(t *testing.T) {
+	cfg := Default()
+	cfg.APIKey = "config-api-key"
+	cfg.QQAppSecret = "config-secret"
+
+	t.Setenv("MINICLAW_API_KEY", "")
+	t.Setenv("MINICLAW_QQ_APP_SECRET", "")
+
+	ApplyEnvOverrides(&cfg)
+
+	if cfg.APIKey != "config-api-key" {
+		t.Fatalf("unexpected api key override: %q", cfg.APIKey)
+	}
+	if cfg.QQAppSecret != "config-secret" {
+		t.Fatalf("unexpected qq app secret override: %q", cfg.QQAppSecret)
 	}
 }

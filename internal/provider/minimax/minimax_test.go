@@ -9,10 +9,11 @@ import (
 
 func TestResolveAnthropicMessagesURLNormalizesBaseEndpoint(t *testing.T) {
 	cases := map[string]string{
-		"https://api.minimaxi.com/anthropic":            "https://api.minimaxi.com/anthropic/messages",
-		"https://api.minimaxi.com/anthropic/":           "https://api.minimaxi.com/anthropic/messages",
-		"https://api.minimaxi.com/anthropic/messages":   "https://api.minimaxi.com/anthropic/messages",
+		"https://api.minimaxi.com/anthropic":             "https://api.minimaxi.com/anthropic/v1/messages",
+		"https://api.minimaxi.com/anthropic/":            "https://api.minimaxi.com/anthropic/v1/messages",
+		"https://api.minimaxi.com/anthropic/messages":    "https://api.minimaxi.com/anthropic/v1/messages",
 		"https://api.minimaxi.com/anthropic/v1/messages": "https://api.minimaxi.com/anthropic/v1/messages",
+		"https://api.minimaxi.com/anthropic/v1":          "https://api.minimaxi.com/anthropic/v1/messages",
 	}
 	for input, want := range cases {
 		if got := ResolveAnthropicMessagesURL(input); got != want {

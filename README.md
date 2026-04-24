@@ -1,89 +1,404 @@
 # MiniClaw (Go)
 
-用 Go 标准库重写的 `MiniClaw`，对齐参考仓库 `d:\work\github\miniclaw` 当前已实现的核心功能：
+MiniClaw 的 Go 单二进制实现，优先保证可编译、可部署、可在服务器上长期运行。
 
-- `onboard` / `status` / `agent` / `gateway` / `memory`
-- MiniMax Anthropic-compatible `messages` 调用
-- 多轮工具循环：`list_dir`、`read_file`、`write_file`、`exec`、`grep_search`
-- workspace / session / memory 持久化
-- 多通道 gateway：QQ webhook + Weixin 长轮询
-- 内建原生 MCP：`web_search`、`understand_image`
-- 可选 stdio MCP 与命令型外部工具扩展（读取 `mcp_config_path` 指向的 JSON 配置）
+项目约束：
 
-实现约束：
+- 只依赖 Go 标准库
+- 不要求额外安装 `curl`、`rg`、`grep`、`uvx`、`npx`
+- 核心能力以单二进制 + 本地文件状态为中心
+- 外部 MCP 或命令型工具是可选扩展，不影响主流程
 
-- **不安装第三方 Go 依赖**
-- 默认只用 Go 标准库
-- 核心功能不依赖 `curl`、`rg`、`grep`、`uvx`、`npx`
-- 如果你配置了额外 stdio MCP 服务，那些服务本身仍然需要你自己提供可执行文件
+## 能力概览
 
-## 当前状态
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| Agent | 已实现 | MiniMax Anthropic-compatible `messages` 调用，多轮工具循环 |
+| Gateway / QQ | 已实现 | webhook、鉴权、事件解析、回复回传 |
+| Gateway / Weixin | 已实现 | 长轮询、二维码登录、账号持久化、媒体回复 |
+| Workspace / Memory | 已实现 | session、memory、state 落盘 |
+| Native MCP | 已实现 | `web_search`、`understand_image` |
+| 外部 MCP / Command Tools | 已实现 | 从 `mcp_config_path` 加载 stdio MCP 或命令工具 |
+| Cron / Skills Loader | 未纳入首版 | 目录保留，真实调度与装载逻辑未落地 |
 
-已完成：
+## 配置方式
 
-- Go 项目骨架与可编译单二进制入口
-- 配置加载、环境变量覆盖、workspace 初始化
-- session JSONL 记录
-- 三层记忆系统与 `memory` 子命令
-- 本地工具执行与安全边界
-- MiniMax Agent loop
-- QQ bootstrap / webhook / 事件处理
-- Weixin 兼容 openclaw-weixin backend API 的长轮询、登录和媒体回复基础能力
-- 原生 MCP manager + 内建 MCP 工具
-- 基础单元测试
+配置优先级从高到低：
 
-暂未纳入首版范围：
+1. 命令行参数
+2. 环境变量
+3. `~/.config/miniclaw/config`
+4. 内置默认值
 
-- `cron` 调度器的真实执行能力
-- `skills` 目录的实际技能装载逻辑
+仓库内的示例文件：
 
-这两项在参考仓库里也属于预留目录，不是当前已落地的主功能。
-
-## 构建与测试
-
-```powershell
-go test ./...
-go build -o miniclaw.exe ./cmd/miniclaw
-```
-
-## 快速开始
-
-1. 构建二进制
-2. 运行 `miniclaw onboard`
-3. 编辑 `~/.config/miniclaw/config`
-4. 配置 `api_key` 和你要启用的 gateway 通道字段
-5. 运行 `miniclaw status` 检查状态
-
-常用命令：
-
-```powershell
-miniclaw onboard
-miniclaw status
-miniclaw agent -p "hello"
-miniclaw memory show
-miniclaw gateway --once
-miniclaw gateway --channel weixin
-miniclaw gateway login --channel weixin
-miniclaw gateway accounts
-```
-
-## 配置文件
-
-示例配置见：
-
-- `examples/miniclaw.config.example`
-- `examples/mcp.json.example`
-- `examples/mcp.mmx.json.example`
+- `.env.example`：环境变量模板，适合 shell 或 systemd `EnvironmentFile`
+- `examples/miniclaw.config.example`：配置文件模板
+- `examples/mcp.json.example`：stdio MCP + command tools 示例
+- `examples/mcp.mmx.json.example`：只启用 `mmx` 的精简 MCP 示例
+- `examples/miniclaw.weixin.service.example`：Linux systemd 微信服务模板
 
 默认路径：
 
-- 配置：`~/.config/miniclaw/config`
+- 配置文件：`~/.config/miniclaw/config`
 - MCP 配置：`~/.config/miniclaw/mcp.json`
-- 工作区：`~/.miniclaw/workspace`
+- 工作目录：`~/.miniclaw/workspace`
+
+说明：
+
+- 程序本身不会自动加载 `.env` 文件
+- 本地调试可用 `set -a && source ./.env && set +a`
+- 服务器部署推荐用 systemd `EnvironmentFile=/etc/miniclaw/miniclaw.env`
+
+## 快速开始
+
+### 1. 构建与测试
+
+```bash
+go test ./...
+./build.sh
+```
+
+构建 Linux 服务器版本：
+
+```bash
+GOOS=linux GOARCH=amd64 ./build.sh
+```
+
+如果目标机器是 ARM64，把 `GOARCH=amd64` 换成 `GOARCH=arm64`。
+
+### 2. 初始化
+
+```bash
+./miniclaw onboard
+./miniclaw status
+```
+
+### 3. 准备配置
+
+本地 shell 方式：
+
+```bash
+cp .env.example .env
+set -a && source ./.env && set +a
+./miniclaw status
+```
+
+如果你更偏好配置文件，也可以直接参考 `examples/miniclaw.config.example` 填写 `~/.config/miniclaw/config`。
+
+### 4. 验证 Agent
+
+```bash
+./miniclaw agent -p "hello"
+```
+
+## 服务器端部署
+
+以下流程默认面向 Linux + systemd，并以微信通道为例。
+
+### 使用部署脚本
+
+如果目标机器已经能通过 SSH 访问，可以直接使用仓库里的部署脚本：
+
+```bash
+MINICLAW_GATEWAY_CHANNEL=qq ./scripts/deploy_bl.sh
+MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh
+```
+
+脚本会自动完成这些步骤：
+
+- 构建 Linux 二进制并同步到远端
+- 在远端生成或复用 `MINICLAW_REMOTE_ENV_FILE` 指向的 env 文件
+- 在远端执行一次 `miniclaw onboard`
+- 安装 systemd 服务并按通道生成正确的 `ExecStart`
+- 对 `qq` 执行 webhook 回调校验
+- 对 `weixin` 执行 bootstrap 校验
+
+首次部署微信时，如果远端还没有保存过账号，可显式开启登录流程：
+
+```bash
+MINICLAW_GATEWAY_CHANNEL=weixin MINICLAW_REMOTE_WEIXIN_LOGIN=1 ./scripts/deploy_bl.sh
+```
+
+这会在 SSH 会话中执行 `miniclaw gateway login --channel weixin`，打印二维码链接并等待扫码确认。
+
+如果你希望把这套变量固化成一份可重复使用的本地脚本部署配置，直接使用 `examples/deploy.weixin.env.example`：
+
+```bash
+cp ./examples/deploy.weixin.env.example ./.deploy.weixin.env
+set -a && source ./.deploy.weixin.env && set +a
+./scripts/deploy_bl.sh
+```
+
+这份模板默认按当前 `deploy_bl.sh` 的远端目录布局填写，并启用首发微信扫码登录。
+
+### QQ 和微信并行部署
+
+当前 `gateway` 进程一次只跑一个通道。要在同一台机器上同时跑 QQ 和微信，需要各自部署成独立 systemd 服务，但可以共用同一份二进制和远端代码目录。
+
+并行部署时，至少把下面四项分开：
+
+- `MINICLAW_REMOTE_SERVICE`
+- `MINICLAW_REMOTE_ENV_FILE`
+- `MINICLAW_REMOTE_APP_HOME`
+- `MINICLAW_REMOTE_WORKSPACE`
+
+仓库已经提供两份并行部署模板：
+
+```bash
+cp ./examples/deploy.qq.env.example ./.deploy.qq.env
+cp ./examples/deploy.weixin.env.example ./.deploy.weixin.env
+
+set -a && source ./.deploy.qq.env && set +a
+./scripts/deploy_bl.sh
+
+set -a && source ./.deploy.weixin.env && set +a
+./scripts/deploy_bl.sh
+```
+
+默认推荐的并行部署布局：
+
+```text
+/bl/project/miniclaw/repo
+/etc/miniclaw/miniclaw-qq.env
+/etc/miniclaw/miniclaw-weixin.env
+/var/lib/miniclaw/qq/
+	workspace/
+/var/lib/miniclaw/weixin/
+	workspace/
+```
+
+这两次部署会分别生成 `miniclaw-qq` 和 `miniclaw-weixin` 两个服务。部署完成后可分别检查：
+
+```bash
+sudo systemctl status miniclaw-qq
+sudo systemctl status miniclaw-weixin
+```
+
+常用覆盖变量：
+
+- `MINICLAW_DEPLOY_HOST`
+- `MINICLAW_REMOTE_USER`
+- `MINICLAW_REMOTE_HOME`
+- `MINICLAW_REMOTE_REPO`
+- `MINICLAW_REMOTE_ENV_FILE`
+- `MINICLAW_REMOTE_APP_HOME`
+- `MINICLAW_REMOTE_WORKSPACE`
+- `MINICLAW_REMOTE_CONFIG`
+- `MINICLAW_REMOTE_MCP_CONFIG`
+- `MINICLAW_REMOTE_SERVICE`
+- `MINICLAW_REMOTE_WEBHOOK_PORT`
+
+### deploy_bl.sh 默认目录布局
+
+按 `deploy_bl.sh` 当前默认值，远端路径会是：
+
+```text
+/bl/project/miniclaw/repo
+/etc/miniclaw/miniclaw.env
+/root/.config/miniclaw/config
+/root/.config/miniclaw/mcp.json
+/root/.miniclaw/workspace
+```
+
+这些路径分别来自：
+
+- `MINICLAW_REMOTE_REPO=/bl/project/miniclaw/repo`
+- `MINICLAW_REMOTE_ENV_FILE=/etc/miniclaw/miniclaw.env`
+- `MINICLAW_REMOTE_HOME=/root`
+- `MINICLAW_REMOTE_MCP_CONFIG=/root/.config/miniclaw/mcp.json`
+
+如果你希望脚本按下面的手工部署目录工作，至少覆盖这些变量：
+
+```bash
+MINICLAW_REMOTE_REPO=/opt/miniclaw \
+MINICLAW_REMOTE_HOME=/var/lib/miniclaw \
+MINICLAW_REMOTE_MCP_CONFIG=/etc/miniclaw/mcp.json \
+MINICLAW_GATEWAY_CHANNEL=weixin \
+./scripts/deploy_bl.sh
+```
+
+### 手工部署推荐目录布局
+
+下面这套 `/opt + /var/lib + /etc` 布局是手工部署时更清晰的推荐方案，不是 `deploy_bl.sh` 的默认值。
+
+```text
+/opt/miniclaw/miniclaw
+/etc/miniclaw/miniclaw.env
+/etc/miniclaw/mcp.json
+/var/lib/miniclaw/
+	workspace/
+```
+
+### 1. 创建运行用户和目录
+
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/miniclaw --shell /usr/sbin/nologin miniclaw
+sudo mkdir -p /opt/miniclaw /etc/miniclaw /var/lib/miniclaw/workspace
+sudo chown -R miniclaw:miniclaw /var/lib/miniclaw
+```
+
+### 2. 拷贝二进制与配置模板
+
+```bash
+sudo install -m 0755 ./miniclaw /opt/miniclaw/miniclaw
+sudo install -m 0644 ./.env.example /etc/miniclaw/miniclaw.env
+sudo install -m 0644 ./examples/mcp.json.example /etc/miniclaw/mcp.json
+```
+
+然后编辑 `/etc/miniclaw/miniclaw.env`，至少填这些字段：
+
+- `MINICLAW_API_KEY`
+- `MINICLAW_GATEWAY_CHANNEL=weixin`
+- `MINICLAW_HOME=/var/lib/miniclaw`
+- `MINICLAW_WORKSPACE=/var/lib/miniclaw/workspace`
+- `MINICLAW_MCP_CONFIG_PATH=/etc/miniclaw/mcp.json`
+
+如果你要并行部署 QQ 和微信，建议改成两份 env 文件，例如 `/etc/miniclaw/miniclaw-qq.env` 和 `/etc/miniclaw/miniclaw-weixin.env`，并分别给它们设置不同的 `MINICLAW_HOME` 和 `MINICLAW_WORKSPACE`。
+
+### 3. 以服务用户初始化工作区
+
+```bash
+sudo -u miniclaw bash -lc 'set -a; source /etc/miniclaw/miniclaw.env; set +a; /opt/miniclaw/miniclaw onboard && /opt/miniclaw/miniclaw status'
+```
+
+### 4. 配置微信账号
+
+MiniClaw 的微信通道支持两种方式：
+
+- 直接在环境变量里写 `MINICLAW_WEIXIN_TOKEN`
+- 用二维码登录，把 token 持久化到 workspace
+
+推荐二维码登录一次，再让服务长期复用已保存账号：
+
+```bash
+sudo -u miniclaw bash -lc 'set -a; source /etc/miniclaw/miniclaw.env; set +a; /opt/miniclaw/miniclaw gateway login --channel weixin'
+sudo -u miniclaw bash -lc 'set -a; source /etc/miniclaw/miniclaw.env; set +a; /opt/miniclaw/miniclaw gateway accounts --channel weixin'
+```
+
+登录后的账号信息会保存在：
+
+- `MINICLAW_WORKSPACE/state/weixin/accounts/*.json`
+- `MINICLAW_WORKSPACE/state/weixin/accounts.json`
+- `MINICLAW_WORKSPACE/state/weixin/active_account.txt`
+
+如果有多个微信账号，可在环境变量里设置 `MINICLAW_WEIXIN_ACCOUNT_ID` 指定激活账号。
+
+### 5. 启动前做一次连通性检查
+
+```bash
+sudo -u miniclaw bash -lc 'set -a; source /etc/miniclaw/miniclaw.env; set +a; /opt/miniclaw/miniclaw gateway --channel weixin --once'
+```
+
+`--once` 只做 bootstrap，不进入常驻长轮询，适合上线前 smoke test。
+
+### 6. 安装 systemd 服务
+
+```bash
+sudo cp ./examples/miniclaw.weixin.service.example /etc/systemd/system/miniclaw-weixin.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now miniclaw-weixin
+sudo systemctl status miniclaw-weixin
+sudo journalctl -u miniclaw-weixin -f
+```
+
+如果你修改了 `/etc/miniclaw/miniclaw.env`，执行：
+
+```bash
+sudo systemctl restart miniclaw-weixin
+```
+
+## 微信通道说明
+
+当前微信实现对齐 `@tencent-weixin/openclaw-weixin` 的 backend API 协议，不依赖 Node 插件宿主。
+
+已支持：
+
+- `ilink/bot/getupdates` 长轮询收消息
+- `ilink/bot/sendmessage` 文本回复
+- `ilink/bot/getuploadurl` + CDN 上传媒体
+- 二维码登录、账号保存、账号切换、账号删除
+- 用户白名单
+- 消息去重、会话记录、处理中占位回复
+
+当前限制：
+
+- 未实现 typing 状态
+- 多账号路由策略仍是基础版本
+- 非文本入站消息解析还不完整
+
+媒体回复约定：
+
+- 如果 Agent 最终回复包含 `MEDIA:/absolute/path/to/file`
+- 或包含 `MEDIA:https://...`
+- 程序会先发文字，再上传并发送媒体消息
+
+常用命令：
+
+```bash
+./miniclaw gateway login --channel weixin
+./miniclaw gateway accounts --channel weixin
+./miniclaw gateway accounts --channel weixin --use bot-1
+./miniclaw gateway logout --channel weixin --account bot-1
+./miniclaw gateway --channel weixin --once
+./miniclaw gateway --channel weixin
+```
+
+## QQ 通道说明
+
+QQ 通道默认走 webhook 模式，适合公网入口明确、可配置回调地址的场景。
+
+支持：
+
+- access token 获取
+- bot profile 查询
+- webhook 验证
+- 单聊 / 群聊事件解析
+- 白名单控制
+- 消息去重
+- 处理中占位回复
+- Agent 执行后回传结果
+
+启动：
+
+```bash
+./miniclaw gateway --channel qq --once
+./miniclaw gateway --channel qq
+```
+
+## MCP 与外部工具
+
+### 内建原生 MCP
+
+启用 `enable_mcp=true` 或命令行加 `--mcp` 后，会暴露：
+
+- `web_search`
+- `understand_image`
+
+### 可选 stdio MCP
+
+如果 `mcp_config_path` 指向的 JSON 文件存在，程序会加载其中声明的 `type: "stdio"` 服务。示例见 `examples/mcp.json.example`。
+
+### 命令型外部工具
+
+`mcp_config_path` 同时支持 `type: "command"` 的普通命令行工具。适合接入 `mmx` 这类 CLI。
+
+模板变量支持：
+
+- `{{query}}`
+- `{{prompt}}`
+- `{{image_source}}`
+- `{{MINICLAW_API_KEY}}`
+- `{{MINICLAW_REGION}}`
+- `{{MINICLAW_WORKSPACE}}`
+
+对于 `mmx`，MiniClaw 会自动补上更适合 agent/CI 的默认参数，例如 `--non-interactive` 和 `--quiet`。
+
+如果你只想启用 `mmx`，直接使用 `examples/mcp.mmx.json.example` 即可。
 
 ## Workspace 结构
 
-`miniclaw onboard` 会初始化这些目录和文件：
+`miniclaw onboard` 会初始化：
 
 ```text
 workspace/
@@ -101,7 +416,7 @@ workspace/
 
 ## 记忆系统
 
-支持的命令：
+支持的子命令：
 
 - `miniclaw memory show`
 - `miniclaw memory set -p "..."`
@@ -111,153 +426,6 @@ workspace/
 - `miniclaw memory compact`
 - `miniclaw memory prune [days]`
 - `miniclaw memory clear`
-
-## MCP
-
-### 内建原生 MCP
-
-启用 `enable_mcp=true` 或命令行加 `--mcp` 后，会默认暴露两个内建工具：
-
-- `web_search`：通过标准库 HTTP 发起网页搜索并整理结果
-- `understand_image`：读取本地/远程图片，并调用 MiniMax 描述图片
-
-### 可选 stdio MCP
-
-如果 `mcp_config_path` 指向的 JSON 存在，程序会尝试加载其中声明的 `type: "stdio"` MCP 服务。示例见 `examples/mcp.json.example`。
-
-这条能力是**可选扩展**：
-
-- 不配置也不影响核心功能
-- 配置了就会尝试启动外部 MCP 进程
-
-### 命令型外部工具
-
-`mcp_config_path` 现在还支持声明 `type: "command"` 的外部工具。它们不是 MCP server，而是普通命令行程序，MiniClaw 会：
-
-- 在 agent 执行时把它们注册成工具
-- 用当前 workspace 作为工作目录启动命令
-- 支持在 `args` / `env` 中使用模板变量，例如：
-  - `{{query}}`
-  - `{{prompt}}`
-  - `{{image_source}}`
-  - `{{MINICLAW_API_KEY}}`
-  - `{{MINICLAW_REGION}}`
-  - `{{MINICLAW_WORKSPACE}}`
-
-适合接入像 `https://github.com/MiniMax-AI/cli` 这样的普通外部 CLI。
-
-对于 `mmx`，MiniClaw 会优先补齐 agent/CI 友好的默认参数，例如 `--non-interactive`、`--quiet`，并默认继承**当前 MiniClaw 生效配置**：
-
-- API Key：优先使用 `MINICLAW_API_KEY`，否则使用 `config` 里的 `api_key`
-- Region：根据当前 MiniClaw 的 `base_url` / `api_url` 自动推导（`minimaxi.com` → `cn`，否则 `global`）
-
-随后再补齐 `--api-key` / `--region`，避免命令卡在交互提示里，也避免误用 `mmx` 自己的本地持久化配置。
-
-### MiniMax CLI (`mmx`) 集成
-
-当前示例配置已经内置三条 `mmx` 外部工具示例：
-
-- `mmx_search`
-- `mmx_image`
-- `mmx_vision_describe`
-- `mmx_quota`
-
-如果你只想启用 `mmx`，推荐直接使用 `examples/mcp.mmx.json.example`；它不会顺带尝试启动其他 stdio MCP 进程。
-
-准备方式：
-
-```powershell
-npm install -g mmx-cli
-mmx auth login --api-key sk-xxxxx
-```
-
-示例默认使用 `--api-key` / `--region` / `--non-interactive` / `--quiet`，这样 `mmx` 在 agent 场景下不会弹交互提示，也不会因为读取环境变量而顺手把 key 落到 `~/.mmx/config.json`。
-
-说明：
-
-- `mmx search query --q ... --output json`
-- `mmx image generate --prompt ... --output json`
-- `mmx vision describe --image ... --prompt ... --output json`
-- `mmx quota show --output json`
-
-都可以直接通过 `examples/mcp.json.example` 里的 `type: "command"` 配置暴露给 agent。
-
-其中 `mmx_image` 走的是上游官方 `mmx image generate` 命令，默认只要求 `prompt`，适合让 agent 直接返回生成图片的 URL 结果。
-
-如果你想固定宽高比、批量张数或输出目录，也可以在这个示例基础上自行复制一份工具定义，并在 `args` 里追加固定参数，例如 `--aspect-ratio 16:9`、`--n 3`、`--out-dir ./minimax-output`。
-
-## Gateway Channels
-
-当前 `gateway` 命令支持按通道启动：
-
-- `miniclaw gateway --channel qq`
-- `miniclaw gateway --channel weixin`
-
-如果没有显式传 `--channel`，则使用配置里的 `gateway_channel`，默认值是 `qq`。
-
-### QQ Gateway
-
-支持：
-
-- access token 获取
-- bot profile 查询
-- webhook 验证
-- 单聊 / 群聊事件解析
-- 白名单控制
-- 消息去重
-- 处理中占位回复
-- Agent 执行后回传结果
-
-启动方式：
-
-```powershell
-miniclaw gateway --once
-miniclaw gateway
-```
-
-`--once` 只做 bootstrap，不启动本地 webhook 服务。
-
-### Weixin Gateway
-
-当前微信通道目标是对齐 `@tencent-weixin/openclaw-weixin` 的 backend API 协议，而不是复刻它的 Node 插件宿主。
-
-当前支持：
-
-- `ilink/bot/getupdates` 长轮询收消息
-- `ilink/bot/sendmessage` 文本回复
-- `ilink/bot/getuploadurl` + CDN 上传的图片 / 视频 / 文件回复
-- 二维码登录与 token 持久化
-- 多账号保存、激活、删除
-- 用户白名单
-- 去重 / 会话记录 / 处理中占位回复
-
-当前仍未实现：
-
-- typing 状态
-- 更细粒度的多账号路由策略
-- 非文本入站消息的完整解析
-
-配置项：
-
-- `gateway_channel=weixin`
-- `weixin_api_base=https://ilinkai.weixin.qq.com`
-- `weixin_cdn_base=https://novac2c.cdn.weixin.qq.com/c2c`
-- `weixin_token=...` 或先执行二维码登录
-- `weixin_account_id=bot-1`
-- `weixin_allow_users=u1,u2`
-
-启动方式：
-
-```powershell
-miniclaw gateway login --channel weixin
-miniclaw gateway accounts
-miniclaw gateway --channel weixin --once
-miniclaw gateway --channel weixin
-```
-
-说明：
-
-如果 agent 最终回复里包含 `MEDIA:/absolute/path/to/file` 或 `MEDIA:https://...` 行，当前实现会先发文本说明，再上传并发送媒体消息。
 
 这个实现依赖兼容 `openclaw-weixin` backend API 的服务端接口。仓库当前已包含 Go 侧二维码登录、账号持久化和基础媒体上传，但不包含独立的微信托管后端。
 

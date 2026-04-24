@@ -1,0 +1,23 @@
+[Unit]
+Description=MiniClaw QQ Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=miniclaw
+Group=miniclaw
+WorkingDirectory=/opt/miniclaw
+EnvironmentFile=/etc/miniclaw/miniclaw-qq.env
+ExecStart=/opt/miniclaw/miniclaw gateway --channel qq
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/var/lib/miniclaw/qq
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

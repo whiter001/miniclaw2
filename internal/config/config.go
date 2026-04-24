@@ -365,7 +365,7 @@ func applyConfigValue(cfg *Config, key, value string) {
 
 func applyEnvString(name string, target *string, expandHome bool) {
 	value, ok := os.LookupEnv(name)
-	if !ok {
+	if !ok || strings.TrimSpace(value) == "" {
 		return
 	}
 	if expandHome {
