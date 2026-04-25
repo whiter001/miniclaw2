@@ -1,0 +1,11 @@
+{
+  "id": "daily-summary",
+  "description": "Summarize recent daily notes into memory summary",
+  "enabled": true,
+  "schedule": "0 9 * * *",
+  "prompt": "总结最近一天的重要事项，并更新 memory summary。",
+  "timeout_seconds": 600,
+  "skip_if_running": true,
+  "max_tool_iterations": 40,
+  "enable_mcp": false
+}

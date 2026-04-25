@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	cronpkg "miniclaw2/internal/cron"
 	"miniclaw2/internal/config"
 	"miniclaw2/internal/gateway"
 	"miniclaw2/internal/gateway/weixin"
@@ -52,6 +54,8 @@ func Run(args []string) int {
 		return runOnboard(cfg)
 	case "status":
 		return runStatus(cfg)
+	case "cron":
+		return runCron(cfg, commandArgs)
 	case "gateway":
 		return runGateway(cfg, commandArgs)
 	case "agent":
@@ -97,6 +101,7 @@ func printHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  miniclaw onboard              Initialize config and workspace")
 	fmt.Println("  miniclaw status               Show current configuration status")
+	fmt.Println("  miniclaw cron [list|run|serve|trigger]   Manage serial cron tasks in workspace/cron")
 	fmt.Println("  miniclaw gateway [--channel qq|weixin] [--once] [--webhook-port PORT]   Start gateway bootstrap or channel runner")
 	fmt.Println("  miniclaw gateway login [--channel weixin] [--verbose] [--no-open]   Login and save a Weixin account")
 	fmt.Println("  miniclaw gateway accounts [--channel weixin] [--use ACCOUNT]   List or activate Weixin accounts")
@@ -368,6 +373,92 @@ func runGatewayAccounts(cfg config.Config, args []string) int {
 		fmt.Printf("%s %s (%s)\n", marker, id, strings.Join(details, ", "))
 	}
 	return 0
+}
+
+func runCron(cfg config.Config, args []string) int {
+	if ensureRuntimeReady(cfg) != 0 {
+		return 1
+	}
+	command := "list"
+	commandArgs := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		command = args[0]
+		commandArgs = args[1:]
+	}
+	switch command {
+	case "list":
+		statuses, err := cronpkg.InspectTasks(cfg.Workspace, time.Now())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		if len(statuses) == 0 {
+			fmt.Println("no cron tasks configured.")
+			fmt.Println("create JSON task files under " + cfg.Workspace + string(os.PathSeparator) + "cron")
+			return 0
+		}
+		for _, status := range statuses {
+			fmt.Printf("- %s enabled=%t due=%t running=%t next=%s last=%s\n",
+				status.Task.ID,
+				status.Task.Enabled,
+				status.Due,
+				status.State.Running,
+				formatCronTime(status.State.NextRunAt),
+				firstCronValue(status.State.LastStatus, "-"),
+			)
+		}
+		return 0
+	case "run":
+		summary, err := cronpkg.RunDueTasksOnce(context.Background(), cfg, time.Now())
+		for _, result := range summary.Results {
+			if result.Status == "idle" {
+				continue
+			}
+			fmt.Printf("- %s %s next=%s\n", result.TaskID, result.Status, formatCronTime(result.NextRunAt))
+			if strings.TrimSpace(result.Message) != "" {
+				fmt.Println("  " + result.Message)
+			}
+		}
+		fmt.Printf("cron run summary: evaluated=%d ran=%d skipped=%d failed=%d\n", summary.Evaluated, summary.Ran, summary.Skipped, summary.Failed)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		return 0
+	case "trigger":
+		taskID := flagValue(commandArgs, "--id")
+		if strings.TrimSpace(taskID) == "" && len(commandArgs) > 0 && !strings.HasPrefix(commandArgs[0], "-") {
+			taskID = commandArgs[0]
+		}
+		if strings.TrimSpace(taskID) == "" {
+			fmt.Fprintln(os.Stderr, "usage: miniclaw cron trigger --id TASK_ID")
+			return 1
+		}
+		result, err := cronpkg.RunTaskByID(context.Background(), cfg, taskID, time.Now())
+		fmt.Printf("- %s %s next=%s\n", result.TaskID, result.Status, formatCronTime(result.NextRunAt))
+		if strings.TrimSpace(result.Message) != "" {
+			fmt.Println(result.Message)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		return 0
+	case "serve":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		pollInterval := parseOptionalDuration(commandArgs, "--poll")
+		err := cronpkg.Serve(ctx, cfg, pollInterval, func(line string) { fmt.Println(line) })
+		if err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "unknown cron subcommand: %s\n", command)
+		fmt.Fprintln(os.Stderr, "usage: miniclaw cron [list|run|serve|trigger]")
+		return 1
+	}
 }
 
 func runGatewayLogout(cfg config.Config, args []string) int {
@@ -663,6 +754,22 @@ func resolveWeixinAccountID(cfg config.Config, requested string) (string, error)
 		return "", fmt.Errorf("unknown weixin account: %s", selected)
 	}
 	return selected, nil
+}
+
+func formatCronTime(value time.Time) string {
+	if value.IsZero() {
+		return "-"
+	}
+	return value.Format(time.RFC3339)
+}
+
+func firstCronValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func containsString(values []string, target string) bool {

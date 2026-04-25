@@ -96,7 +96,11 @@ func TestCommandToolCallRendersTemplates(t *testing.T) {
 	if payload["workspace"] != workspace {
 		t.Fatalf("unexpected workspace: %+v", payload)
 	}
-	if payload["pwd"] != filepath.Clean(workspace) {
+	expectedPWD := filepath.Clean(workspace)
+	if resolved, err := filepath.EvalSymlinks(workspace); err == nil {
+		expectedPWD = filepath.Clean(resolved)
+	}
+	if payload["pwd"] != expectedPWD {
 		t.Fatalf("unexpected working directory: %+v", payload)
 	}
 	args, ok := payload["args"].([]any)

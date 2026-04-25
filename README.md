@@ -20,7 +20,7 @@ MiniClaw 的 Go 单二进制实现，优先保证可编译、可部署、可在�
 | Skills / Auto Skills | 已实现 | workspace skills、autoskill、评分回写、QQ / 微信显式 skill 管理 |
 | Native MCP | 已实现 | `web_search`、`understand_image` |
 | 外部 MCP / Command Tools | 已实现 | 从 `mcp_config_path` 加载 stdio MCP 或命令工具 |
-| Cron | 未纳入首版 | `cron/` 目录保留，真实调度逻辑仍未落地 |
+| Cron | 已实现 | `workspace/cron/*.json` 任务定义，单 workspace 串行执行，带状态与锁文件 |
 
 ## 配置方式
 
@@ -34,10 +34,12 @@ MiniClaw 的 Go 单二进制实现，优先保证可编译、可部署、可在�
 仓库内的示例文件：
 
 - `.env.example`：环境变量模板，适合 shell 或 systemd `EnvironmentFile`
+- `docs/cron.md`：cron 串行任务的设计与使用说明
 - `docs/local-weixin.md`：本地直接运行微信通道的说明
 - `docs/deployment.md`：部署说明汇总，包含 systemd、并行部署和 Podman Alpine
 - `docs/skills.md`：skills、autoskill、评分和 QQ / 微信 skill 命令说明
 - `Containerfile.alpine`：基于 Alpine 的 Podman 镜像定义
+- `examples/cron.task.example.json`：cron 任务定义示例
 - `examples/miniclaw.config.example`：配置文件模板
 - `examples/mcp.json.example`：stdio MCP + command tools 示例
 - `examples/mcp.mmx.json.example`：只启用 `mmx` 的精简 MCP 示例
@@ -220,6 +222,21 @@ MiniClaw 当前已经支持：
 - 在 QQ / 微信聊天里通过 `/skill` 命令做显式管理
 
 详细说明见 [docs/skills.md](docs/skills.md)。
+
+## Cron
+
+MiniClaw 现在已经支持基于 `workspace/cron/*.json` 的串行定时任务。
+
+常用命令：
+
+```bash
+./miniclaw cron list
+./miniclaw cron run
+./miniclaw cron trigger --id daily-summary
+./miniclaw cron serve --poll 30s
+```
+
+详细设计、任务文件格式、锁语义和状态文件说明见 [docs/cron.md](docs/cron.md)。
 
 ## Workspace 结构
 
