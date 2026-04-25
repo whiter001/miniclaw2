@@ -44,3 +44,10 @@ memory_summary_max_chars=2000
 memory_daily_entry_max_chars=500
 memory_significance_threshold=3
 memory_prune_keep_days=14
+
+# Skills
+enable_auto_skills=true
+enable_skill_scoring=true
+auto_skill_min_tool_calls=2
+auto_skill_max_examples=5
+skill_selection_limit=2

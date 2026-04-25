@@ -2,6 +2,26 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+deploy_mode="${MINICLAW_DEPLOY_MODE:-podman-alpine}"
+
+case "$deploy_mode" in
+    podman-alpine|podman_alpine|podman|remote-podman|remote-podman-alpine)
+        deploy_mode="remote-podman-alpine"
+        ;;
+    local-podman|local-podman-alpine)
+        exec bash "$repo_root/scripts/deploy_podman_alpine.sh" "$@"
+        ;;
+    remote-systemd|systemd|ssh-systemd)
+        deploy_mode="remote-systemd"
+        ;;
+    *)
+        printf '[deploy] error: unsupported MINICLAW_DEPLOY_MODE: %s\n' "$deploy_mode" >&2
+        exit 1
+        ;;
+esac
+
 host="${MINICLAW_DEPLOY_HOST:-bl}"
 remote_user="${MINICLAW_REMOTE_USER:-root}"
 remote_home="${MINICLAW_REMOTE_HOME:-/root}"
@@ -22,6 +42,19 @@ service_tasks_max="${MINICLAW_SERVICE_TASKS_MAX:-64}"
 deploy_workspace="${MINICLAW_DEPLOY_WORKSPACE:-$PWD}"
 linux_arch="${MINICLAW_LINUX_ARCH:-amd64}"
 remote_mcp_config="${MINICLAW_REMOTE_MCP_CONFIG:-$remote_home/.config/miniclaw/mcp.json}"
+ssh_keepalive_interval="${MINICLAW_SSH_KEEPALIVE_INTERVAL:-30}"
+ssh_keepalive_count_max="${MINICLAW_SSH_KEEPALIVE_COUNT_MAX:-20}"
+remote_podman_image="${MINICLAW_PODMAN_IMAGE:-miniclaw:alpine}"
+remote_podman_container="${MINICLAW_PODMAN_CONTAINER:-$remote_service}"
+remote_podman_state_root="${MINICLAW_PODMAN_STATE_ROOT:-$remote_app_home}"
+remote_podman_env_file="${MINICLAW_PODMAN_ENV_FILE:-$remote_env_file}"
+remote_podman_home="${MINICLAW_PODMAN_HOME:-$remote_app_home}"
+remote_podman_config="${MINICLAW_PODMAN_CONFIG:-$remote_config}"
+remote_podman_mcp_config="${MINICLAW_PODMAN_MCP_CONFIG:-$remote_mcp_config}"
+remote_podman_qq_port="${MINICLAW_PODMAN_QQ_PORT:-$remote_webhook_port}"
+remote_podman_qq_container_port="${MINICLAW_PODMAN_QQ_CONTAINER_PORT:-$remote_webhook_port}"
+remote_podman_weixin_login="${MINICLAW_PODMAN_WEIXIN_LOGIN:-$remote_weixin_login}"
+remote_podman_weixin_login_timeout="${MINICLAW_PODMAN_WEIXIN_LOGIN_TIMEOUT:-$remote_weixin_login_timeout}"
 
 log() {
     printf '[deploy] %s\n' "$*"
@@ -61,7 +94,10 @@ remote_gateway_exec() {
 }
 
 run_ssh() {
-    ssh "${remote_user}@${host}" "$@"
+    ssh \
+        -o ServerAliveInterval="$ssh_keepalive_interval" \
+        -o ServerAliveCountMax="$ssh_keepalive_count_max" \
+        "${remote_user}@${host}" "$@"
 }
 
 warn_legacy_service_conflict() {
@@ -101,7 +137,46 @@ sync_repo() {
         --exclude='coverage.out' \
         --exclude='*.test' \
         --exclude='._*' \
-        -czf - . | run_ssh "set -e; mkdir -p '$remote_repo'; find '$remote_repo' -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cd '$remote_repo'; tar xzf -; chmod +x '$remote_repo/miniclaw' '$remote_repo/build.sh' '$remote_repo/scripts/deploy_bl.sh' || true"
+        -czf - . | run_ssh "set -e; mkdir -p '$remote_repo'; find '$remote_repo' -mindepth 1 -maxdepth 1 -exec rm -rf {} +; cd '$remote_repo'; tar xzf -; chmod +x '$remote_repo/miniclaw' '$remote_repo/build.sh' '$remote_repo/scripts/deploy_bl.sh' '$remote_repo/scripts/deploy_podman_alpine.sh' '$remote_repo/scripts/deploy_bl_dual.sh' || true"
+}
+
+ensure_remote_podman_mcp_config() {
+    if [ -z "$remote_podman_mcp_config" ]; then
+        return
+    fi
+    log "ensuring remote Podman MCP config at $remote_podman_mcp_config"
+    run_ssh "set -e
+target='$remote_podman_mcp_config'
+target_dir=\$(dirname \"\$target\")
+mkdir -p \"\$target_dir\"
+if [ ! -f \"\$target\" ]; then
+    cp '$remote_repo/examples/mcp.mmx.json.example' \"\$target\"
+    printf '[deploy] created MCP config: %s\n' \"\$target\"
+else
+    printf '[deploy] keeping existing MCP config: %s\n' \"\$target\"
+fi"
+}
+
+run_remote_podman_deploy() {
+    log "running remote Podman Alpine deployment on $host"
+    run_ssh "set -e
+command -v podman >/dev/null 2>&1
+cd '$remote_repo'
+export MINICLAW_DEPLOY_WORKSPACE='$remote_repo'
+export MINICLAW_SKIP_BUILD=1
+export MINICLAW_GATEWAY_CHANNEL='$remote_channel'
+export MINICLAW_PODMAN_IMAGE='$remote_podman_image'
+export MINICLAW_PODMAN_CONTAINER='$remote_podman_container'
+export MINICLAW_PODMAN_STATE_ROOT='$remote_podman_state_root'
+export MINICLAW_PODMAN_ENV_FILE='$remote_podman_env_file'
+export MINICLAW_PODMAN_HOME='$remote_podman_home'
+export MINICLAW_PODMAN_CONFIG='$remote_podman_config'
+export MINICLAW_PODMAN_MCP_CONFIG='$remote_podman_mcp_config'
+export MINICLAW_PODMAN_QQ_PORT='$remote_podman_qq_port'
+export MINICLAW_PODMAN_QQ_CONTAINER_PORT='$remote_podman_qq_container_port'
+export MINICLAW_PODMAN_WEIXIN_LOGIN='$remote_podman_weixin_login'
+export MINICLAW_PODMAN_WEIXIN_LOGIN_TIMEOUT='$remote_podman_weixin_login_timeout'
+bash './scripts/deploy_podman_alpine.sh'"
 }
 
 install_remote_env_template() {
@@ -339,9 +414,18 @@ main() {
     require_cmd curl
     require_cmd go
 
-    log "starting deploy to $host (channel=$remote_channel)"
+    log "starting deploy to $host (channel=$remote_channel, mode=$deploy_mode)"
     build_local_binary
     sync_repo
+
+    if [ "$deploy_mode" = 'remote-podman-alpine' ]; then
+        warn_legacy_service_conflict
+        ensure_remote_podman_mcp_config
+        run_remote_podman_deploy
+        log "deploy completed successfully"
+        return
+    fi
+
     warn_legacy_service_conflict
     install_remote_env_template
     run_remote_onboard

@@ -4,10 +4,10 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-qq_env_default="$repo_root/.deploy.qq.env"
-weixin_env_default="$repo_root/.deploy.weixin.env"
-qq_env_fallback="$repo_root/examples/deploy.qq.env.example"
-weixin_env_fallback="$repo_root/examples/deploy.weixin.env.example"
+qq_env_default="$repo_root/.deploy.podman.qq.env"
+weixin_env_default="$repo_root/.deploy.podman.weixin.env"
+qq_env_fallback="$repo_root/examples/deploy.podman.alpine.qq.env.example"
+weixin_env_fallback="$repo_root/examples/deploy.podman.alpine.weixin.env.example"
 qq_env_file="${MINICLAW_DUAL_QQ_ENV_FILE:-}"
 weixin_env_file="${MINICLAW_DUAL_WEIXIN_ENV_FILE:-}"
 

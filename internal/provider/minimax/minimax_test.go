@@ -2,6 +2,8 @@ package minimax
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"miniclaw2/internal/config"
@@ -40,6 +42,44 @@ func TestBuildDefaultSystemPromptUsesDefaultText(t *testing.T) {
 	got := BuildDefaultSystemPrompt(cfg)
 	if !contains(got, "You are MiniClaw, a local AI agent") {
 		t.Fatalf("unexpected system prompt: %s", got)
+	}
+}
+
+func TestBuildSystemPromptForQueryIncludesRelevantSkills(t *testing.T) {
+	workspace := t.TempDir()
+	skillPath := filepath.Join(workspace, "skills", "testing", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("# Testing\n\nUse Go unit tests and table-driven coverage for handler changes."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := BuildSystemPromptForQuery(config.Config{Workspace: workspace}, "please add go unit tests for this handler")
+	if !contains(got, "## Relevant Skills") {
+		t.Fatalf("expected relevant skills in prompt, got %s", got)
+	}
+	if !contains(got, "table-driven coverage") {
+		t.Fatalf("expected skill content in prompt, got %s", got)
+	}
+}
+
+func TestBuildSystemPromptForQuerySkipsUnrelatedSkills(t *testing.T) {
+	workspace := t.TempDir()
+	skillPath := filepath.Join(workspace, "skills", "deploy", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("# Deploy\n\nUse systemd and deployment notes for server rollout."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := BuildSystemPromptForQuery(config.Config{Workspace: workspace}, "refactor tokenizer internals")
+	if contains(got, "## Relevant Skills") {
+		t.Fatalf("did not expect relevant skills in prompt, got %s", got)
+	}
+	if contains(got, "systemd and deployment notes") {
+		t.Fatalf("did not expect unrelated skill content in prompt, got %s", got)
 	}
 }
 

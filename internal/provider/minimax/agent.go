@@ -9,6 +9,7 @@ import (
 	"miniclaw2/internal/config"
 	"miniclaw2/internal/mcp"
 	"miniclaw2/internal/session"
+	"miniclaw2/internal/skills"
 	"miniclaw2/internal/tools"
 )
 
@@ -49,6 +50,7 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 	client := NewClient(cfg)
 	manager := mcp.NewManager(cfg)
 	defer manager.StopAll()
+	promptContext := BuildPromptContextForQuery(cfg, prompt)
 
 	messages := []requestMessage{{
 		Role: "user",
@@ -66,11 +68,12 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
 			TopP:        1.0,
-			System:      BuildDefaultSystemPrompt(cfg),
+			System:      promptContext.Prompt,
 			Tools:       buildEffectiveToolSchema(manager),
 			Messages:    messages,
 		})
 		if err != nil {
+			_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, false)
 			return "", err
 		}
 		assistantText := strings.TrimSpace(ExtractTextBlocks(response.Content))
@@ -80,8 +83,11 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 		messages = append(messages, requestMessage{Role: "assistant", Content: responseToRequestBlocks(response.Content)})
 		if len(toolUses) == 0 {
 			if err := recorder.AppendMessage("message", "assistant", assistantText); err != nil {
+				_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, false)
 				return "", err
 			}
+			_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, true)
+			_ = skills.AutoCaptureSession(cfg, recorder.FilePath, prompt, assistantText)
 			return assistantText, nil
 		}
 		for _, toolUse := range toolUses {
@@ -97,6 +103,7 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 			messages = append(messages, buildToolResultMessage(toolUse, toolResult, false))
 		}
 	}
+	_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, false)
 	return "", fmt.Errorf("%s", buildToolIterationLimitError(cfg.MaxToolIterations, lastAssistantText, lastToolUses))
 }
 

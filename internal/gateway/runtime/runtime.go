@@ -55,6 +55,12 @@ func ProcessTextMessage(ctx context.Context, options ProcessOptions) error {
 	if prompt == "" {
 		return nil
 	}
+	if handled, err := handleSkillCommand(ctx, options.Config, prompt, options.SendReply); handled {
+		if err != nil {
+			return err
+		}
+		return AppendEventLog(options.Config, channel, "skill_command", mergePayload(options.Message.Payload, "scene", options.Message.Scene, "msg_id", options.Message.MessageID, "prompt", limitErrorPreview(prompt)))
+	}
 	modelPrompt := strings.TrimSpace(options.ModelPrompt)
 	if modelPrompt == "" {
 		modelPrompt = prompt

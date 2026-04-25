@@ -48,6 +48,11 @@ type Config struct {
 	MemoryDailyEntryMaxChars    int
 	MemorySignificanceThreshold int
 	MemoryPruneKeepDays         int
+	EnableAutoSkills            bool
+	EnableSkillScoring          bool
+	AutoSkillMinToolCalls       int
+	AutoSkillMaxExamples        int
+	SkillSelectionLimit         int
 }
 
 func Default() Config {
@@ -92,6 +97,11 @@ func Default() Config {
 		MemoryDailyEntryMaxChars:    500,
 		MemorySignificanceThreshold: 3,
 		MemoryPruneKeepDays:         14,
+		EnableAutoSkills:            true,
+		EnableSkillScoring:          true,
+		AutoSkillMinToolCalls:       2,
+		AutoSkillMaxExamples:        5,
+		SkillSelectionLimit:         2,
 	}
 }
 
@@ -160,6 +170,11 @@ func ApplyEnvOverrides(cfg *Config) {
 	applyEnvInt("MINICLAW_MEMORY_DAILY_ENTRY_MAX_CHARS", &cfg.MemoryDailyEntryMaxChars, func(v int) bool { return v > 0 })
 	applyEnvInt("MINICLAW_MEMORY_SIGNIFICANCE_THRESHOLD", &cfg.MemorySignificanceThreshold, func(v int) bool { return v > 0 })
 	applyEnvInt("MINICLAW_MEMORY_PRUNE_KEEP_DAYS", &cfg.MemoryPruneKeepDays, func(v int) bool { return v >= 0 })
+	applyEnvBool("MINICLAW_ENABLE_AUTO_SKILLS", &cfg.EnableAutoSkills)
+	applyEnvBool("MINICLAW_ENABLE_SKILL_SCORING", &cfg.EnableSkillScoring)
+	applyEnvInt("MINICLAW_AUTO_SKILL_MIN_TOOL_CALLS", &cfg.AutoSkillMinToolCalls, func(v int) bool { return v > 0 })
+	applyEnvInt("MINICLAW_AUTO_SKILL_MAX_EXAMPLES", &cfg.AutoSkillMaxExamples, func(v int) bool { return v > 0 })
+	applyEnvInt("MINICLAW_SKILL_SELECTION_LIMIT", &cfg.SkillSelectionLimit, func(v int) bool { return v > 0 && v <= 20 })
 	applyEnvInt("MINICLAW_MAX_TOKENS", &cfg.MaxTokens, nil)
 	applyEnvInt("MINICLAW_REQUEST_TIMEOUT", &cfg.RequestTimeout, nil)
 	applyEnvInt("MINICLAW_MAX_TOOL_ITERATIONS", &cfg.MaxToolIterations, func(v int) bool { return v >= 10 && v <= 1000 })
@@ -233,6 +248,11 @@ func WriteDefault(cfg Config) error {
 		"memory_daily_entry_max_chars=" + strconv.Itoa(cfg.MemoryDailyEntryMaxChars),
 		"memory_significance_threshold=" + strconv.Itoa(cfg.MemorySignificanceThreshold),
 		"memory_prune_keep_days=" + strconv.Itoa(cfg.MemoryPruneKeepDays),
+		"enable_auto_skills=" + strconv.FormatBool(cfg.EnableAutoSkills),
+		"enable_skill_scoring=" + strconv.FormatBool(cfg.EnableSkillScoring),
+		"auto_skill_min_tool_calls=" + strconv.Itoa(cfg.AutoSkillMinToolCalls),
+		"auto_skill_max_examples=" + strconv.Itoa(cfg.AutoSkillMaxExamples),
+		"skill_selection_limit=" + strconv.Itoa(cfg.SkillSelectionLimit),
 	}, "\n") + "\n"
 	return os.WriteFile(cfg.ConfigPath, []byte(content), 0o644)
 }
@@ -315,6 +335,22 @@ func applyConfigValue(cfg *Config, key, value string) {
 	case "memory_prune_keep_days":
 		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
 			cfg.MemoryPruneKeepDays = parsed
+		}
+	case "enable_auto_skills":
+		cfg.EnableAutoSkills = value == "true" || value == "1"
+	case "enable_skill_scoring":
+		cfg.EnableSkillScoring = value == "true" || value == "1"
+	case "auto_skill_min_tool_calls":
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			cfg.AutoSkillMinToolCalls = parsed
+		}
+	case "auto_skill_max_examples":
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			cfg.AutoSkillMaxExamples = parsed
+		}
+	case "skill_selection_limit":
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 && parsed <= 20 {
+			cfg.SkillSelectionLimit = parsed
 		}
 	case "enable_mcp":
 		cfg.EnableMCP = value == "true" || value == "1"

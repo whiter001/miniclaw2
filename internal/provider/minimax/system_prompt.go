@@ -1,7 +1,6 @@
 package minimax
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +8,13 @@ import (
 
 	"miniclaw2/internal/config"
 	"miniclaw2/internal/memory"
+	"miniclaw2/internal/skills"
 )
+
+type PromptContext struct {
+	Prompt string
+	Skills []skills.Skill
+}
 
 func LoadSystemPrompt(cfg config.Config) string {
 	store := memory.NewStore(cfg.Workspace)
@@ -27,6 +32,19 @@ func LoadSystemPrompt(cfg config.Config) string {
 		parts = append(parts, memoryContext)
 	}
 	return strings.Join(parts, "\n\n---\n\n")
+}
+
+func BuildPromptContextForQuery(cfg config.Config, query string) PromptContext {
+	loaded := skills.Discover(filepath.Join(cfg.Workspace, "skills"))
+	selected := skills.Select(query, cfg.SkillSelectionLimit, loaded)
+	base := []string{"You are MiniClaw, a local AI agent. When you need workspace information, prefer using tools instead of guessing. Only access files inside the workspace."}
+	if systemPrompt := LoadSystemPrompt(cfg); strings.TrimSpace(systemPrompt) != "" {
+		base = append(base, systemPrompt)
+	}
+	if relevantSkills := skills.BuildContext(selected); strings.TrimSpace(relevantSkills) != "" {
+		base = append(base, relevantSkills)
+	}
+	return PromptContext{Prompt: strings.Join(base, "\n\n"), Skills: selected}
 }
 
 func AppendDailyMemoryEntry(cfg config.Config, prompt, response string) error {
@@ -53,10 +71,9 @@ func AppendDailyMemoryEntry(cfg config.Config, prompt, response string) error {
 }
 
 func BuildDefaultSystemPrompt(cfg config.Config) string {
-	systemPrompt := LoadSystemPrompt(cfg)
-	defaultSystem := "You are MiniClaw, a local AI agent. When you need workspace information, prefer using tools instead of guessing. Only access files inside the workspace."
-	if strings.TrimSpace(systemPrompt) == "" {
-		return defaultSystem
-	}
-	return fmt.Sprintf("%s\n\n%s", defaultSystem, systemPrompt)
+	return BuildPromptContextForQuery(cfg, "").Prompt
+}
+
+func BuildSystemPromptForQuery(cfg config.Config, query string) string {
+	return BuildPromptContextForQuery(cfg, query).Prompt
 }

@@ -6,12 +6,14 @@ deploy_workspace="${MINICLAW_DEPLOY_WORKSPACE:-$PWD}"
 podman_bin="${MINICLAW_PODMAN_BIN:-podman}"
 containerfile_path="${MINICLAW_PODMAN_CONTAINERFILE:-$deploy_workspace/Containerfile.alpine}"
 remote_channel="${MINICLAW_GATEWAY_CHANNEL:-weixin}"
-linux_arch="${MINICLAW_LINUX_ARCH:-$(go env GOARCH)}"
+linux_arch="${MINICLAW_LINUX_ARCH:-}"
+skip_build="${MINICLAW_SKIP_BUILD:-0}"
 podman_image="${MINICLAW_PODMAN_IMAGE:-miniclaw:alpine}"
 podman_container="${MINICLAW_PODMAN_CONTAINER:-miniclaw-$remote_channel}"
 podman_state_root="${MINICLAW_PODMAN_STATE_ROOT:-$deploy_workspace/.podman/$podman_container}"
 podman_env_file="${MINICLAW_PODMAN_ENV_FILE:-$podman_state_root/miniclaw.env}"
 podman_home="${MINICLAW_PODMAN_HOME:-$podman_state_root/home}"
+podman_config="${MINICLAW_PODMAN_CONFIG:-}"
 podman_mcp_config="${MINICLAW_PODMAN_MCP_CONFIG:-}"
 podman_qq_port="${MINICLAW_PODMAN_QQ_PORT:-18080}"
 podman_qq_container_port="${MINICLAW_PODMAN_QQ_CONTAINER_PORT:-18080}"
@@ -53,6 +55,14 @@ remote_gateway_exec() {
 }
 
 build_local_binary() {
+    if [ "$skip_build" = '1' ]; then
+        [ -x "$deploy_workspace/miniclaw" ] || fail "MINICLAW_SKIP_BUILD=1 requires an existing executable at $deploy_workspace/miniclaw"
+        log "reusing existing binary $deploy_workspace/miniclaw"
+        return
+    fi
+    if [ -z "$linux_arch" ]; then
+        linux_arch="$(go env GOARCH)"
+    fi
     log "building local linux binary"
     cd "$deploy_workspace"
     CGO_ENABLED=0 GOOS=linux GOARCH="$linux_arch" go build -trimpath -ldflags='-s -w' -o miniclaw ./cmd/miniclaw
@@ -66,7 +76,7 @@ build_podman_image() {
 
 ensure_local_state() {
     log "ensuring local Podman state at $podman_state_root"
-    mkdir -p "$podman_state_root" "$podman_home" "$(dirname "$podman_env_file")"
+    mkdir -p "$podman_state_root" "$podman_home" "$podman_home/.config/miniclaw" "$(dirname "$podman_env_file")"
     if [ ! -f "$podman_env_file" ]; then
         cp "$deploy_workspace/.env.example" "$podman_env_file"
         sed -i.bak \
@@ -82,6 +92,15 @@ ensure_local_state() {
     else
         printf '[podman-deploy] keeping existing env file: %s\n' "$podman_env_file"
     fi
+    if [ -z "$podman_config" ] && [ -f "$HOME/.config/miniclaw/config" ]; then
+        podman_config="$HOME/.config/miniclaw/config"
+    fi
+    if [ -n "$podman_config" ]; then
+        [ -f "$podman_config" ] || fail "missing config: $podman_config"
+        cp "$podman_config" "$podman_home/.config/miniclaw/config"
+        chmod 600 "$podman_home/.config/miniclaw/config" || true
+        printf '[podman-deploy] synced config: %s\n' "$podman_home/.config/miniclaw/config"
+    fi
 }
 
 build_podman_common_args() {
@@ -90,6 +109,9 @@ build_podman_common_args() {
         -e "HOME=$container_home"
         -e "MINICLAW_HOME=$container_home"
         -e "MINICLAW_WORKSPACE=$container_home/workspace"
+        -e "MINICLAW_GATEWAY_CHANNEL=$remote_channel"
+        -e "MINICLAW_QQ_WEBHOOK_HOST=0.0.0.0"
+        -e "MINICLAW_QQ_WEBHOOK_PORT=$podman_qq_container_port"
         -e "MINICLAW_MCP_CONFIG_PATH=$container_mcp_config"
         -v "$podman_home:$container_home"
     )
@@ -174,7 +196,9 @@ verify_qq_webhook() {
 
 main() {
     ensure_supported_channel
-    require_cmd go
+    if [ "$skip_build" != '1' ]; then
+        require_cmd go
+    fi
     require_cmd "$podman_bin"
     require_cmd curl
 

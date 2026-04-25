@@ -14,9 +14,14 @@ memory_summary_max_chars=3333
 memory_daily_entry_max_chars=777
 memory_significance_threshold=6
 memory_prune_keep_days=9
+enable_auto_skills=false
+enable_skill_scoring=false
+auto_skill_min_tool_calls=4
+auto_skill_max_examples=7
+skill_selection_limit=5
 `
 	cfg := ParseContent(content, base)
-	if cfg.MemoryRecentDays != 4 || cfg.MemoryRecentChars != 2500 || cfg.MemorySummaryMaxLines != 11 || cfg.MemorySummaryMaxChars != 3333 || cfg.MemoryDailyEntryMaxChars != 777 || cfg.MemorySignificanceThreshold != 6 || cfg.MemoryPruneKeepDays != 9 {
+	if cfg.MemoryRecentDays != 4 || cfg.MemoryRecentChars != 2500 || cfg.MemorySummaryMaxLines != 11 || cfg.MemorySummaryMaxChars != 3333 || cfg.MemoryDailyEntryMaxChars != 777 || cfg.MemorySignificanceThreshold != 6 || cfg.MemoryPruneKeepDays != 9 || cfg.EnableAutoSkills || cfg.EnableSkillScoring || cfg.AutoSkillMinToolCalls != 4 || cfg.AutoSkillMaxExamples != 7 || cfg.SkillSelectionLimit != 5 {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
@@ -80,5 +85,20 @@ func TestApplyEnvOverridesIgnoresEmptyStringValues(t *testing.T) {
 	}
 	if cfg.QQAppSecret != "config-secret" {
 		t.Fatalf("unexpected qq app secret override: %q", cfg.QQAppSecret)
+	}
+}
+
+func TestApplyEnvOverridesAppliesAutoSkillSettings(t *testing.T) {
+	cfg := Default()
+	t.Setenv("MINICLAW_ENABLE_AUTO_SKILLS", "false")
+	t.Setenv("MINICLAW_ENABLE_SKILL_SCORING", "false")
+	t.Setenv("MINICLAW_AUTO_SKILL_MIN_TOOL_CALLS", "6")
+	t.Setenv("MINICLAW_AUTO_SKILL_MAX_EXAMPLES", "8")
+	t.Setenv("MINICLAW_SKILL_SELECTION_LIMIT", "4")
+
+	ApplyEnvOverrides(&cfg)
+
+	if cfg.EnableAutoSkills || cfg.EnableSkillScoring || cfg.AutoSkillMinToolCalls != 6 || cfg.AutoSkillMaxExamples != 8 || cfg.SkillSelectionLimit != 4 {
+		t.Fatalf("unexpected auto skill env overrides: %+v", cfg)
 	}
 }

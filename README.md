@@ -17,9 +17,10 @@ MiniClaw 的 Go 单二进制实现，优先保证可编译、可部署、可在�
 | Gateway / QQ | 已实现 | webhook、鉴权、事件解析、回复回传 |
 | Gateway / Weixin | 已实现 | 长轮询、二维码登录、账号持久化、媒体回复 |
 | Workspace / Memory | 已实现 | session、memory、state 落盘 |
+| Skills / Auto Skills | 已实现 | workspace skills、autoskill、评分回写、QQ / 微信显式 skill 管理 |
 | Native MCP | 已实现 | `web_search`、`understand_image` |
 | 外部 MCP / Command Tools | 已实现 | 从 `mcp_config_path` 加载 stdio MCP 或命令工具 |
-| Cron / Skills Loader | 未纳入首版 | 目录保留，真实调度与装载逻辑未落地 |
+| Cron | 未纳入首版 | `cron/` 目录保留，真实调度逻辑仍未落地 |
 
 ## 配置方式
 
@@ -34,6 +35,7 @@ MiniClaw 的 Go 单二进制实现，优先保证可编译、可部署、可在�
 
 - `.env.example`：环境变量模板，适合 shell 或 systemd `EnvironmentFile`
 - `docs/deployment.md`：部署说明汇总，包含 systemd、并行部署和 Podman Alpine
+- `docs/skills.md`：skills、autoskill、评分和 QQ / 微信 skill 命令说明
 - `Containerfile.alpine`：基于 Alpine 的 Podman 镜像定义
 - `examples/miniclaw.config.example`：配置文件模板
 - `examples/mcp.json.example`：stdio MCP + command tools 示例
@@ -109,8 +111,9 @@ set -a && source ./.env && set +a
 
 常用入口：
 
-- 脚本部署：`MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh`
-- 容器部署：`./scripts/deploy_podman_alpine.sh`
+- 脚本部署：`MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh`（默认走 Podman Alpine）
+- 远端 SSH + systemd：`MINICLAW_DEPLOY_MODE=remote-systemd MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh`
+- 显式容器部署：`./scripts/deploy_podman_alpine.sh`
 
 如果你要查部署变量、目录布局、首发微信扫码、并行部署约束或 Podman 示例，直接看 [docs/deployment.md](docs/deployment.md)。
 
@@ -201,6 +204,17 @@ QQ 通道默认走 webhook 模式，适合公网入口明确、可配置回调�
 对于 `mmx`，MiniClaw 会自动补上更适合 agent/CI 的默认参数，例如 `--non-interactive` 和 `--quiet`。
 
 如果你只想启用 `mmx`，直接使用 `examples/mcp.mmx.json.example` 即可。
+
+## Skills
+
+MiniClaw 当前已经支持：
+
+- `workspace/skills/` 下的手工 skill 装载
+- 基于成功 session 自动沉淀 autoskill
+- skill 评分与排序
+- 在 QQ / 微信聊天里通过 `/skill` 命令做显式管理
+
+详细说明见 [docs/skills.md](docs/skills.md)。
 
 ## Workspace 结构
 

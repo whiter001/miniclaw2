@@ -11,7 +11,7 @@
 
 ## 使用部署脚本
 
-如果目标机器已经能通过 SSH 访问，可以直接使用仓库里的部署脚本：
+`./scripts/deploy_bl.sh` 现在是统一入口。对 `qq` / `weixin` 通道，默认会先在本机构建并同步代码，再到远端服务器上执行 Podman Alpine 容器部署：
 
 ```bash
 MINICLAW_GATEWAY_CHANNEL=qq ./scripts/deploy_bl.sh
@@ -20,6 +20,46 @@ MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh
 
 脚本会自动完成这些步骤：
 
+- 在本机构建 Linux 二进制
+- 把仓库同步到远端 `MINICLAW_REMOTE_REPO`
+- 在远端服务器上构建 Alpine 基础镜像
+- 在远端生成或复用 `MINICLAW_PODMAN_ENV_FILE` 指向的 env 文件
+- 在远端以同一组挂载执行一次 `miniclaw onboard`
+- 对微信按需触发远端二维码登录
+- 在远端启动长期运行的 Podman 容器
+- 对 `qq` 执行远端 callback 校验，对 `weixin` 执行远端 bootstrap 校验
+
+推荐直接从远端 Podman 模板开始：
+
+```bash
+cp ./examples/deploy.podman.alpine.weixin.env.example ./.deploy.podman.weixin.env
+set -a && source ./.deploy.podman.weixin.env && set +a
+./scripts/deploy_bl.sh
+```
+
+双通道脚本 `./scripts/deploy_bl_dual.sh` 也会默认读取：
+
+- `./.deploy.podman.qq.env`
+- `./.deploy.podman.weixin.env`
+
+如果这些文件不存在，会回退到：
+
+- `examples/deploy.podman.alpine.qq.env.example`
+- `examples/deploy.podman.alpine.weixin.env.example`
+
+这两份模板默认就是给远端 `bl` 服务器准备的，不是给本机 Podman machine 准备的。
+
+## 切回 SSH + systemd
+
+如果目标机器已经能通过 SSH 访问，并且你要继续使用远端 systemd 路径，请显式设置 `MINICLAW_DEPLOY_MODE=remote-systemd`：
+
+```bash
+MINICLAW_DEPLOY_MODE=remote-systemd MINICLAW_GATEWAY_CHANNEL=qq ./scripts/deploy_bl.sh
+MINICLAW_DEPLOY_MODE=remote-systemd MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh
+```
+
+远端 systemd 模式会自动完成这些步骤：
+
 - 构建 Linux 二进制并同步到远端
 - 在远端生成或复用 `MINICLAW_REMOTE_ENV_FILE` 指向的 env 文件
 - 在远端执行一次 `miniclaw onboard`
@@ -27,25 +67,9 @@ MINICLAW_GATEWAY_CHANNEL=weixin ./scripts/deploy_bl.sh
 - 对 `qq` 执行 webhook 回调校验
 - 对 `weixin` 执行 bootstrap 校验
 
-首次部署微信时，如果远端还没有保存过账号，可显式开启登录流程：
+如果你希望把这套变量固化成一份可重复使用的远端部署配置，直接使用 `examples/deploy.weixin.env.example`。这份模板已经内置 `MINICLAW_DEPLOY_MODE=remote-systemd`，并默认启用首发微信扫码登录。
 
-```bash
-MINICLAW_GATEWAY_CHANNEL=weixin MINICLAW_REMOTE_WEIXIN_LOGIN=1 ./scripts/deploy_bl.sh
-```
-
-这会在 SSH 会话中执行 `miniclaw gateway login --channel weixin`，打印二维码链接并等待扫码确认。
-
-如果你希望把这套变量固化成一份可重复使用的本地脚本部署配置，直接使用 `examples/deploy.weixin.env.example`：
-
-```bash
-cp ./examples/deploy.weixin.env.example ./.deploy.weixin.env
-set -a && source ./.deploy.weixin.env && set +a
-./scripts/deploy_bl.sh
-```
-
-这份模板默认按当前 `deploy_bl.sh` 的远端目录布局填写，并启用首发微信扫码登录。
-
-## QQ 和微信并行部署
+## SSH + systemd 并行部署
 
 当前 `gateway` 进程一次只跑一个通道。要在同一台机器上同时跑 QQ 和微信，需要各自部署成独立 systemd 服务，但可以共用同一份二进制和远端代码目录。
 
@@ -102,7 +126,7 @@ sudo systemctl status miniclaw-weixin
 - `MINICLAW_REMOTE_SERVICE`
 - `MINICLAW_REMOTE_WEBHOOK_PORT`
 
-## deploy_bl.sh 默认目录布局
+## remote-systemd 模式目录布局
 
 按 `deploy_bl.sh` 当前默认值，远端路径会是：
 
@@ -252,6 +276,12 @@ set -a && source ./.deploy.podman.weixin.env && set +a
 ```
 
 脚本默认把容器持久化目录放在仓库下的 `.podman/<container>/`，并把应用 env 文件生成到 `MINICLAW_PODMAN_ENV_FILE`。首次运行后，记得编辑这份 env 文件，填入 `MINICLAW_API_KEY`、QQ 或微信通道所需的凭证。
+
+如果宿主机已经有 `~/.config/miniclaw/config`，脚本会自动把它同步进容器的 home 目录。你也可以显式指定：
+
+```bash
+MINICLAW_PODMAN_CONFIG=/absolute/path/to/config
+```
 
 Podman 并行部署时，至少把下面几项分开：
 
