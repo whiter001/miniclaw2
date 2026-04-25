@@ -34,6 +34,7 @@ MiniClaw 的 Go 单二进制实现，优先保证可编译、可部署、可在�
 仓库内的示例文件：
 
 - `.env.example`：环境变量模板，适合 shell 或 systemd `EnvironmentFile`
+- `docs/local-weixin.md`：本地直接运行微信通道的说明
 - `docs/deployment.md`：部署说明汇总，包含 systemd、并行部署和 Podman Alpine
 - `docs/skills.md`：skills、autoskill、评分和 QQ / 微信 skill 命令说明
 - `Containerfile.alpine`：基于 Alpine 的 Podman 镜像定义
@@ -98,6 +99,8 @@ set -a && source ./.env && set +a
 ./miniclaw agent -p "hello"
 ```
 
+如果你要在本机直接跑微信通道，优先看 [docs/local-weixin.md](docs/local-weixin.md)。这份文档会避开当前默认指向远端 `bl` 的部署脚本。
+
 ## 服务器端部署
 
 完整部署说明已经迁移到 [docs/deployment.md](docs/deployment.md)。
@@ -118,6 +121,8 @@ set -a && source ./.env && set +a
 如果你要查部署变量、目录布局、首发微信扫码、并行部署约束或 Podman 示例，直接看 [docs/deployment.md](docs/deployment.md)。
 
 ## 微信通道说明
+
+如果你的目标是在本机直接把微信通道跑起来，而不是部署到远端服务器，先看 [docs/local-weixin.md](docs/local-weixin.md)。
 
 当前微信实现对齐 `@tencent-weixin/openclaw-weixin` 的 backend API 协议，不依赖 Node 插件宿主。
 

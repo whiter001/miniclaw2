@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -95,7 +98,7 @@ func printHelp() {
 	fmt.Println("  miniclaw onboard              Initialize config and workspace")
 	fmt.Println("  miniclaw status               Show current configuration status")
 	fmt.Println("  miniclaw gateway [--channel qq|weixin] [--once] [--webhook-port PORT]   Start gateway bootstrap or channel runner")
-	fmt.Println("  miniclaw gateway login [--channel weixin] [--verbose]   Login and save a Weixin account")
+	fmt.Println("  miniclaw gateway login [--channel weixin] [--verbose] [--no-open]   Login and save a Weixin account")
 	fmt.Println("  miniclaw gateway accounts [--channel weixin] [--use ACCOUNT]   List or activate Weixin accounts")
 	fmt.Println("  miniclaw gateway logout [--channel weixin] [--account ACCOUNT]   Remove a Weixin account")
 	fmt.Println("  miniclaw agent [-p PROMPT] [--workspace PATH] [--mcp]    Run agent")
@@ -231,17 +234,33 @@ func runGatewayLogin(cfg config.Config, args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	openQRCodePage := !hasFlag(args, "--no-open")
 	result, err := weixin.LoginWithQR(ctx, cfg, weixin.QRLoginOptions{
 		Verbose: hasFlag(args, "--verbose"),
 		Logf:    func(line string) { fmt.Println(line) },
 		Timeout: parseOptionalDuration(args, "--timeout"),
+		OnQRReady: func(start weixin.QRLoginStartResult) {
+			if strings.TrimSpace(start.QRCodeURL) == "" {
+				return
+			}
+			fmt.Println("二维码页面链接: " + start.QRCodeURL)
+			if !openQRCodePage {
+				fmt.Println("手工打开命令: " + browserOpenHint(start.QRCodeURL))
+				return
+			}
+			if err := openBrowserURL(start.QRCodeURL); err != nil {
+				fmt.Println("无法自动打开浏览器，请手工执行: " + browserOpenHint(start.QRCodeURL))
+				return
+			}
+			fmt.Println("已尝试在默认浏览器打开二维码页面。")
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
 	if result.QRCodeURL != "" {
-		fmt.Println("qrcode url: " + result.QRCodeURL)
+		fmt.Println("qrcode page: " + result.QRCodeURL)
 	}
 	fmt.Println("weixin account saved: " + result.AccountID)
 	if result.UserID != "" {
@@ -251,6 +270,43 @@ func runGatewayLogin(cfg config.Config, args []string) int {
 		fmt.Println("api base: " + result.BaseURL)
 	}
 	return 0
+}
+
+func openBrowserURL(rawURL string) error {
+	name, args, err := browserOpenCommand(runtime.GOOS, rawURL)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
+func browserOpenHint(rawURL string) string {
+	name, args, err := browserOpenCommand(runtime.GOOS, rawURL)
+	if err != nil {
+		return rawURL
+	}
+	parts := append([]string{name}, args...)
+	return strings.Join(parts, " ")
+}
+
+func browserOpenCommand(goos, rawURL string) (string, []string, error) {
+	url := strconv.Quote(strings.TrimSpace(rawURL))
+	if url == `""` {
+		return "", nil, fmt.Errorf("empty url")
+	}
+	switch goos {
+	case "darwin":
+		return "open", []string{url[1 : len(url)-1]}, nil
+	case "linux":
+		return "xdg-open", []string{url[1 : len(url)-1]}, nil
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url[1 : len(url)-1]}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported platform: %s", goos)
+	}
 }
 
 func runGatewayAccounts(cfg config.Config, args []string) int {

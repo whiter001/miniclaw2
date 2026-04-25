@@ -25,6 +25,7 @@ type QRLoginOptions struct {
 	Timeout time.Duration
 	Verbose bool
 	Logf    func(string)
+	OnQRReady func(QRLoginStartResult)
 }
 
 type QRLoginStartResult struct {
@@ -73,6 +74,9 @@ func LoginWithQR(ctx context.Context, cfg config.Config, options QRLoginOptions)
 	if err != nil {
 		return QRLoginResult{}, err
 	}
+	if options.OnQRReady != nil {
+		options.OnQRReady(start)
+	}
 	session := loginSession{
 		QRCode:         start.QRCode,
 		QRCodeURL:      start.QRCodeURL,
@@ -111,7 +115,7 @@ func StartQRLogin(ctx context.Context, cfg config.Config, options QRLoginOptions
 	if strings.TrimSpace(response.QRCode) == "" || strings.TrimSpace(response.QRCodeURL) == "" {
 		return QRLoginStartResult{}, fmt.Errorf("weixin login QR response is missing qrcode data")
 	}
-	logLine(options.Logf, "请用微信扫描以下二维码链接完成登录：")
+	logLine(options.Logf, "请在浏览器中打开以下二维码页面，再用微信扫码完成登录：")
 	logLine(options.Logf, response.QRCodeURL)
 	return QRLoginStartResult{QRCode: response.QRCode, QRCodeURL: response.QRCodeURL, Message: "scan the QR code URL with Weixin"}, nil
 }
