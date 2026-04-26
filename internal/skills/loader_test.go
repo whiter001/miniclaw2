@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,6 +52,31 @@ func TestBuildTurnContextIncludesRelevantSkillContent(t *testing.T) {
 	}
 	if !strings.Contains(got, "table-driven coverage") {
 		t.Fatalf("expected skill content in context, got %s", got)
+	}
+}
+
+func TestTokenizeSplitsPunctuationDelimitedTerms(t *testing.T) {
+	tokens := tokenize("执行mmx help,维护关于 mmx 的 skill")
+
+	if slices.Contains(tokens, "help,维护关于") {
+		t.Fatalf("expected punctuation-delimited terms to split, got %v", tokens)
+	}
+	if !slices.Contains(tokens, "help") {
+		t.Fatalf("expected help token, got %v", tokens)
+	}
+	if !slices.Contains(tokens, "维护关于") {
+		t.Fatalf("expected Chinese term token, got %v", tokens)
+	}
+}
+
+func TestTokenizePreservesToolAndSlugTokens(t *testing.T) {
+	tokens := tokenize("use read_file for autoskill-mmx-help updates")
+
+	if !slices.Contains(tokens, "read_file") {
+		t.Fatalf("expected underscore-delimited tool token to be preserved, got %v", tokens)
+	}
+	if !slices.Contains(tokens, "autoskill-mmx-help") {
+		t.Fatalf("expected hyphen-delimited slug token to be preserved, got %v", tokens)
 	}
 }
 
@@ -146,6 +172,86 @@ func TestAutoCaptureSessionCreatesAndUpdatesSkill(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(loaded[0].Metadata.Tools, ","), "read_file") {
 		t.Fatalf("expected tool metadata, got %+v", loaded[0].Metadata)
+	}
+}
+
+func TestAutoCaptureSessionSplitsMixedPunctuationKeywords(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-mmx.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "执行mmx help,维护关于 mmx 的 skill"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "done"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "done"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "已更新 mmx skill"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 autoskill, got %d", len(loaded))
+	}
+	if slices.Contains(loaded[0].Metadata.Keywords, "help,维护关于") {
+		t.Fatalf("expected punctuation-delimited keyword to split, got %+v", loaded[0].Metadata.Keywords)
+	}
+	if !slices.Contains(loaded[0].Metadata.Keywords, "help") {
+		t.Fatalf("expected help keyword, got %+v", loaded[0].Metadata.Keywords)
+	}
+	if !slices.Contains(loaded[0].Metadata.Keywords, "维护关于") {
+		t.Fatalf("expected Chinese keyword, got %+v", loaded[0].Metadata.Keywords)
+	}
+}
+
+func TestAutoCaptureSessionCleansLegacyPunctuationKeywords(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	skillPath := filepath.Join(workspace, "skills", "autoskill-mmx-help-channel-note", "SKILL.md")
+	writeSkill(t, filepath.Join(workspace, "skills"), "autoskill-mmx-help-channel-note", "# Mmx Help Channel Note\n\nLegacy skill content.")
+	if err := writeSkillMetadata(filepath.Join(filepath.Dir(skillPath), skillMetadataFileName), SkillMetadata{
+		Slug:      "autoskill-mmx-help-channel-note",
+		Auto:      true,
+		Keywords:  []string{"mmx", "help,维护关于", "skill"},
+		Tools:     []string{"exec", "read_file"},
+		CreatedAt: "2026-04-26T07:35:24+08:00",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-mmx-cleanup.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "执行mmx help,维护关于 mmx 的 skill"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "done"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "done"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "已更新 mmx skill"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 autoskill, got %d", len(loaded))
+	}
+	if slices.Contains(loaded[0].Metadata.Keywords, "help,维护关于") {
+		t.Fatalf("expected legacy punctuation keyword to be removed, got %+v", loaded[0].Metadata.Keywords)
+	}
+	if !slices.Contains(loaded[0].Metadata.Keywords, "help") {
+		t.Fatalf("expected help keyword, got %+v", loaded[0].Metadata.Keywords)
+	}
+	if !slices.Contains(loaded[0].Metadata.Keywords, "维护关于") {
+		t.Fatalf("expected Chinese keyword, got %+v", loaded[0].Metadata.Keywords)
 	}
 }
 

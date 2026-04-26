@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"miniclaw2/internal/memory"
 )
@@ -187,11 +188,15 @@ func scoreSkill(skill Skill, tokens []string) int {
 
 func tokenize(query string) []string {
 	query = strings.ToLower(query)
-	fields := strings.Fields(query)
+	fields := strings.FieldsFunc(query, func(char rune) bool {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			return false
+		}
+		return char != '_' && char != '-'
+	})
 	tokens := make([]string, 0, len(fields))
 	seen := map[string]struct{}{}
 	for _, field := range fields {
-		field = strings.Trim(field, " ,.;:!?()[]{}<>\"'`")
 		if field == "" {
 			continue
 		}

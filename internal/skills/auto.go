@@ -207,7 +207,7 @@ func upsertAutoSkill(cfg config.Config, experience sessionExperience) error {
 	meta.Auto = true
 	meta.CaptureCount++
 	meta.UpdatedAt = now
-	meta.Keywords = mergeOrdered(meta.Keywords, experience.Keywords)
+	meta.Keywords = normalizeAutoKeywords(mergeOrdered(meta.Keywords, experience.Keywords))
 	meta.Tools = mergeOrdered(meta.Tools, experience.ToolNames)
 	meta.Examples = compactExamples(append([]SkillExample{{
 		Prompt:    memory.LimitText(strings.TrimSpace(experience.Prompt), maxExamplePromptChars),
@@ -374,6 +374,29 @@ func compactExamples(examples []SkillExample, maxExamples int) []SkillExample {
 		}
 	}
 	return trimmed
+}
+
+func normalizeAutoKeywords(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		tokens := tokenize(value)
+		if len(tokens) == 0 {
+			trimmed := strings.TrimSpace(strings.ToLower(value))
+			if trimmed == "" {
+				continue
+			}
+			tokens = []string{trimmed}
+		}
+		for _, token := range tokens {
+			if _, ok := seen[token]; ok {
+				continue
+			}
+			seen[token] = struct{}{}
+			normalized = append(normalized, token)
+		}
+	}
+	return normalized
 }
 
 func compactStrings(values []string) []string {
