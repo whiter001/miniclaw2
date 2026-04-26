@@ -1,0 +1,326 @@
+:root {
+  font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #1d2733;
+  background:
+    radial-gradient(circle at top left, rgba(12, 138, 122, 0.14), transparent 30%),
+    radial-gradient(circle at top right, rgba(224, 152, 53, 0.16), transparent 28%),
+    linear-gradient(180deg, #f6f3ec 0%, #eef4f0 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --shell-border: rgba(32, 53, 70, 0.09);
+  --shell-shadow: 0 24px 48px rgba(20, 30, 42, 0.08);
+  --surface: rgba(255, 255, 255, 0.78);
+  --surface-strong: rgba(255, 255, 255, 0.92);
+  --terminal-bg: #18232f;
+  --terminal-text: #d7e6ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(13, 42, 57, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(13, 42, 57, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.2), transparent 80%);
+  z-index: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.shell-layout {
+  min-height: 100vh;
+  background: transparent;
+  position: relative;
+  z-index: 1;
+}
+
+.shell-sider.ant-layout-sider {
+  background: rgba(14, 34, 47, 0.9);
+  backdrop-filter: blur(24px);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+.shell-brand {
+  padding: 28px 22px 18px;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.shell-brand .ant-typography {
+  color: inherit;
+  margin-bottom: 0;
+}
+
+.shell-eyebrow {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+.shell-menu.ant-menu {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  border-inline-end: 0;
+  padding: 4px 12px 16px;
+}
+
+.shell-menu.ant-menu .ant-menu-item {
+  border-radius: 14px;
+  margin: 8px 0;
+  height: 48px;
+  line-height: 48px;
+  font-weight: 600;
+}
+
+.shell-menu.ant-menu .ant-menu-item-selected {
+  background: linear-gradient(135deg, rgba(12, 138, 122, 0.9), rgba(224, 152, 53, 0.9));
+  color: #fff;
+  box-shadow: 0 14px 28px rgba(5, 34, 41, 0.24);
+}
+
+.shell-header {
+  padding: 24px 28px 8px;
+  height: auto;
+  line-height: normal;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.shell-header .ant-typography {
+  margin-bottom: 0;
+}
+
+.header-copy {
+  align-items: center;
+}
+
+.shell-content {
+  padding: 0 28px 28px;
+  background: transparent;
+}
+
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page-grid-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  gap: 16px;
+}
+
+.panel-card.ant-card,
+.metric-card.ant-card,
+.hero-card.ant-card {
+  background: var(--surface);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--shell-border);
+  box-shadow: var(--shell-shadow);
+}
+
+.hero-card .ant-card-body {
+  padding: 28px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(243, 247, 243, 0.68));
+  border-radius: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-card .ant-card-body::after {
+  content: "";
+  position: absolute;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  right: -70px;
+  top: -100px;
+  background: radial-gradient(circle, rgba(12, 138, 122, 0.18), transparent 68%);
+  pointer-events: none;
+}
+
+.hero-copy {
+  max-width: 780px;
+}
+
+.hero-copy .ant-typography h1,
+.hero-copy h1.ant-typography {
+  margin: 10px 0 12px;
+  font-size: clamp(2rem, 4vw, 3.6rem);
+  line-height: 1;
+  max-width: 12ch;
+}
+
+.hero-paragraph {
+  max-width: 60ch;
+  font-size: 1rem;
+}
+
+.hero-chip-row,
+.example-row,
+.command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.brand-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(15, 39, 55, 0.08);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.metric-card .ant-card-body {
+  padding: 20px 22px;
+}
+
+.summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.page-intro .ant-card-body {
+  padding: 24px 28px;
+}
+
+.agent-form {
+  margin-bottom: 16px;
+}
+
+.agent-inline-alert {
+  margin-top: 16px;
+}
+
+.preset-card-body {
+  width: 100%;
+}
+
+.panel-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 240px;
+}
+
+.result-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.result-meta .ant-descriptions-item-label {
+  width: 96px;
+  color: rgba(29, 39, 51, 0.6);
+  font-weight: 600;
+}
+
+.result-panel .ant-card-body {
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.terminal-output {
+  margin: 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--terminal-bg);
+  color: var(--terminal-text);
+  font-family: "SFMono-Regular", "JetBrains Mono", "Source Code Pro", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 200px;
+}
+
+.terminal-output-muted {
+  background: #222d36;
+  color: #bdcdda;
+}
+
+.result-tabs .ant-tabs-nav {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 1180px) {
+  .page-grid-two {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 992px) {
+  .shell-header {
+    padding: 20px 18px 8px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .shell-content {
+    padding: 0 18px 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .hero-card .ant-card-body,
+  .page-intro .ant-card-body {
+    padding: 20px;
+  }
+
+  .hero-copy .ant-typography h1,
+  .hero-copy h1.ant-typography {
+    max-width: none;
+  }
+
+  .result-meta .ant-descriptions-item-label,
+  .result-meta .ant-descriptions-item-content {
+    display: block;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
