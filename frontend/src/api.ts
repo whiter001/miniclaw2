@@ -2,6 +2,7 @@ export type CliCommand = "status" | "agent";
 
 export interface HealthResponse {
 	ok: boolean;
+	port?: number;
 	repoRoot: string;
 	cliPath: string;
 	binaryMode: "binary" | "go-run";

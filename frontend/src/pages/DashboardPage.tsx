@@ -1,45 +1,18 @@
-import { Alert, Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { Alert, Button, Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
+import { useNavigate } from "react-router-dom";
 
-import { fetchHealth, runCli, type CliRunResponse, type HealthResponse } from "../api";
 import { RunResultPanel } from "../components/RunResultPanel";
+import { emitPromptRequested } from "../workbenchEvents";
+import { useWorkspaceStatus } from "../workspaceStatus";
 
 export function DashboardPage() {
-	const [health, setHealth] = useState<HealthResponse | null>(null);
-	const [statusResult, setStatusResult] = useState<CliRunResponse | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string>();
+	const navigate = useNavigate();
+	const { health, statusResult, loading, error, refreshWorkspace } = useWorkspaceStatus();
 
-	useEffect(() => {
-		let active = true;
-
-		async function load() {
-			setLoading(true);
-			setError(undefined);
-			try {
-				const [healthPayload, statusPayload] = await Promise.all([fetchHealth(), runCli({ command: "status" })]);
-				if (!active) {
-					return;
-				}
-				setHealth(healthPayload);
-				setStatusResult(statusPayload);
-			} catch (loadError) {
-				if (!active) {
-					return;
-				}
-				setError(loadError instanceof Error ? loadError.message : String(loadError));
-			} finally {
-				if (active) {
-					setLoading(false);
-				}
-			}
-		}
-
-		void load();
-		return () => {
-			active = false;
-		};
-	}, []);
+	function openAgentPrompt(prompt: string, section = "composer") {
+		emitPromptRequested(prompt);
+		navigate(`/agent#${section}`);
+	}
 
 	return (
 		<div className="page-stack">
@@ -59,6 +32,16 @@ export function DashboardPage() {
 						<span className="brand-chip">React Router</span>
 						<span className="brand-chip">Bun Server</span>
 					</div>
+					<Space wrap size="small">
+						<Button type="primary" onClick={() => openAgentPrompt("总结当前运行时状态，并指出异常项和下一步建议")}>
+							生成诊断任务
+						</Button>
+						<Button onClick={() => openAgentPrompt("基于当前工作区状态，给出下一步执行清单")}>生成下一步建议</Button>
+						<Button onClick={() => navigate("/agent#history")}>查看运行记录</Button>
+						<Button onClick={() => void refreshWorkspace()} loading={loading}>
+							刷新状态
+						</Button>
+					</Space>
 				</Space>
 			</Card>
 
@@ -96,6 +79,12 @@ export function DashboardPage() {
 								<Typography.Text strong>快速查看状态</Typography.Text>
 								<Typography.Paragraph type="secondary">
 									首页会自动执行一次 <Typography.Text code>miniclaw status</Typography.Text>，方便确认运行时配置。
+								</Typography.Paragraph>
+							</div>
+							<div>
+								<Typography.Text strong>从状态直接发起任务</Typography.Text>
+								<Typography.Paragraph type="secondary">
+									概览页可以直接把当前状态转成诊断任务或下一步建议，无需手动复制上下文。
 								</Typography.Paragraph>
 							</div>
 							<div>

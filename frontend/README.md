@@ -5,7 +5,7 @@
 当前能力：
 
 - Ant Design 界面
-- React Router 路由
+- React Router 路由（/agent、/dashboard、/commands）
 - Bun full-stack server
 - 通过 HTTP API 执行本地 `./miniclaw status`
 - 通过 HTTP API 执行本地 `./miniclaw agent -p "..."`
