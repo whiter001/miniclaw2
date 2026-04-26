@@ -20,7 +20,13 @@ bun install
 bun run dev
 ```
 
-启动后默认监听 `http://localhost:3000`。
+启动后默认监听 `http://localhost:5020`。
+
+如果需要覆盖端口，可设置：
+
+```bash
+MINICLAW_FRONTEND_PORT=5080 bun run dev
+```
 
 ## 构建
 

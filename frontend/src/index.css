@@ -12,7 +12,7 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   --shell-border: rgba(32, 53, 70, 0.09);
-  --shell-shadow: 0 24px 48px rgba(20, 30, 42, 0.08);
+  --shell-shadow: 0 18px 36px rgba(20, 30, 42, 0.08);
   --surface: rgba(255, 255, 255, 0.78);
   --surface-strong: rgba(255, 255, 255, 0.92);
   --terminal-bg: #18232f;
@@ -62,7 +62,7 @@ a {
 }
 
 .shell-brand {
-  padding: 28px 22px 18px;
+  padding: 22px 18px 12px;
   color: rgba(255, 255, 255, 0.94);
 }
 
@@ -73,9 +73,9 @@ a {
 
 .shell-eyebrow {
   display: block;
-  margin-bottom: 8px;
-  font-size: 12px;
-  letter-spacing: 0.18em;
+  margin-bottom: 6px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.55) !important;
 }
@@ -84,14 +84,14 @@ a {
   background: transparent;
   color: rgba(255, 255, 255, 0.78);
   border-inline-end: 0;
-  padding: 4px 12px 16px;
+  padding: 2px 10px 12px;
 }
 
 .shell-menu.ant-menu .ant-menu-item {
-  border-radius: 14px;
-  margin: 8px 0;
-  height: 48px;
-  line-height: 48px;
+  border-radius: 12px;
+  margin: 6px 0;
+  height: 42px;
+  line-height: 42px;
   font-weight: 600;
 }
 
@@ -102,14 +102,14 @@ a {
 }
 
 .shell-header {
-  padding: 24px 28px 8px;
+  padding: 18px 22px 6px;
   height: auto;
   line-height: normal;
   background: transparent;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .shell-header .ant-typography {
@@ -121,20 +121,20 @@ a {
 }
 
 .shell-content {
-  padding: 0 28px 28px;
+  padding: 0 22px 22px;
   background: transparent;
 }
 
 .page-stack {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .page-grid-two {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
-  gap: 16px;
+  gap: 12px;
 }
 
 .panel-card.ant-card,
@@ -147,9 +147,9 @@ a {
 }
 
 .hero-card .ant-card-body {
-  padding: 28px;
+  padding: 22px;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(243, 247, 243, 0.68));
-  border-radius: 24px;
+  border-radius: 20px;
   position: relative;
   overflow: hidden;
 }
@@ -157,11 +157,11 @@ a {
 .hero-card .ant-card-body::after {
   content: "";
   position: absolute;
-  width: 260px;
-  height: 260px;
+  width: 220px;
+  height: 220px;
   border-radius: 50%;
-  right: -70px;
-  top: -100px;
+  right: -60px;
+  top: -90px;
   background: radial-gradient(circle, rgba(12, 138, 122, 0.18), transparent 68%);
   pointer-events: none;
 }
@@ -172,15 +172,15 @@ a {
 
 .hero-copy .ant-typography h1,
 .hero-copy h1.ant-typography {
-  margin: 10px 0 12px;
-  font-size: clamp(2rem, 4vw, 3.6rem);
+  margin: 8px 0 10px;
+  font-size: clamp(1.75rem, 3.4vw, 3rem);
   line-height: 1;
   max-width: 12ch;
 }
 
 .hero-paragraph {
   max-width: 60ch;
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
 .hero-chip-row,
@@ -188,41 +188,41 @@ a {
 .command-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
 }
 
 .brand-chip {
   display: inline-flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 999px;
   background: rgba(15, 39, 55, 0.08);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.03em;
 }
 
 .metric-card .ant-card-body {
-  padding: 20px 22px;
+  padding: 16px 18px;
 }
 
 .summary-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .page-intro .ant-card-body {
-  padding: 24px 28px;
+  padding: 18px 20px;
 }
 
 .agent-form {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .agent-inline-alert {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .preset-card-body {
@@ -234,14 +234,14 @@ a {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  min-height: 240px;
+  gap: 10px;
+  min-height: 180px;
 }
 
 .result-stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .result-meta .ant-descriptions-item-label {
@@ -251,23 +251,23 @@ a {
 }
 
 .result-panel .ant-card-body {
-  padding-top: 18px;
-  padding-bottom: 18px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
 .terminal-output {
   margin: 0;
-  padding: 16px;
-  border-radius: 16px;
+  padding: 14px;
+  border-radius: 14px;
   background: var(--terminal-bg);
   color: var(--terminal-text);
   font-family: "SFMono-Regular", "JetBrains Mono", "Source Code Pro", monospace;
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 12px;
+  line-height: 1.55;
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  min-height: 200px;
+  min-height: 160px;
 }
 
 .terminal-output-muted {
@@ -276,7 +276,7 @@ a {
 }
 
 .result-tabs .ant-tabs-nav {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 @media (max-width: 1180px) {
@@ -287,20 +287,20 @@ a {
 
 @media (max-width: 992px) {
   .shell-header {
-    padding: 20px 18px 8px;
+    padding: 16px 16px 6px;
     align-items: flex-start;
     flex-direction: column;
   }
 
   .shell-content {
-    padding: 0 18px 20px;
+    padding: 0 16px 16px;
   }
 }
 
 @media (max-width: 768px) {
   .hero-card .ant-card-body,
   .page-intro .ant-card-body {
-    padding: 20px;
+    padding: 16px;
   }
 
   .hero-copy .ant-typography h1,

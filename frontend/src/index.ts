@@ -28,6 +28,17 @@ const repoRoot = resolve(frontendRoot, "..");
 const miniclawBinaryPath = join(repoRoot, "miniclaw");
 const requestTimeoutMs = 180_000;
 
+function resolveFrontendPort() {
+  const raw = process.env.MINICLAW_FRONTEND_PORT?.trim() || process.env.PORT?.trim() || "5020";
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0 || parsed > 65535) {
+    return 5020;
+  }
+  return parsed;
+}
+
+const frontendPort = resolveFrontendPort();
+
 function formatArg(value: string) {
   if (value === "") {
     return '""';
@@ -95,7 +106,7 @@ function jsonError(error: unknown) {
   }
   console.error(error);
   return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
-  }
+}
 
 async function runCli(payload: CliRunRequest) {
   const args = buildCliArgs(payload);
@@ -143,11 +154,13 @@ async function runCli(payload: CliRunRequest) {
 }
 
 const server = serve({
+  port: frontendPort,
   routes: {
     "/api/health": async () => {
       const binaryMode: BinaryMode = existsSync(miniclawBinaryPath) ? "binary" : "go-run";
       return Response.json({
         ok: true,
+        port: frontendPort,
         repoRoot,
         frontendRoot,
         cliPath: binaryMode === "binary" ? "./miniclaw" : "go run cmd/miniclaw/main.go",

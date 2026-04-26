@@ -22,6 +22,7 @@ export function App() {
 
   return (
     <ConfigProvider
+      componentSize="small"
       theme={{
         algorithm: theme.defaultAlgorithm,
         token: {
@@ -30,13 +31,13 @@ export function App() {
           colorSuccess: "#198754",
           colorWarning: "#c37b1d",
           colorTextBase: "#1d2733",
-          borderRadius: 18,
+          borderRadius: 16,
           fontFamily: '"Avenir Next", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif',
         },
       }}
     >
       <Layout className="shell-layout">
-        <Layout.Sider breakpoint="lg" collapsedWidth={0} width={260} className="shell-sider">
+        <Layout.Sider breakpoint="lg" collapsedWidth={0} width={236} className="shell-sider">
           <div className="shell-brand">
             <Typography.Text className="shell-eyebrow">Bun + MiniClaw</Typography.Text>
             <Typography.Title level={3}>本地 Agent 控制台</Typography.Title>
