@@ -1,8 +1,9 @@
 import { serve } from "bun";
-import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import index from "./index.html";
+import { deleteSkill, deleteTask, getBinaryMode, getDashboardSummary, getRunDetail, getSkillDetail, listRuns, listSkills, listTasks, loadRuntimeConfig, saveSkill, saveTask } from "./serverData";
+import type { SkillWritePayload, TaskWritePayload } from "./types";
 
 type BinaryMode = "binary" | "go-run";
 type CliCommand = "status" | "agent";
@@ -50,7 +51,7 @@ function formatArg(value: string) {
 }
 
 function resolveCliInvocation(args: string[]) {
-  if (existsSync(miniclawBinaryPath)) {
+  if (getBinaryMode(miniclawBinaryPath) === "binary") {
     return {
       binaryMode: "binary" as BinaryMode,
       cliPath: "./miniclaw",
@@ -153,20 +154,207 @@ async function runCli(payload: CliRunRequest) {
   };
 }
 
+async function runCronTrigger(taskId: string) {
+  const args = ["cron", "trigger", "--id", taskId];
+  const invocation = resolveCliInvocation(args);
+  const startedAt = Date.now();
+  const proc = Bun.spawn({
+    cmd: invocation.cmd,
+    cwd: repoRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+    },
+  });
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill();
+  }, requestTimeoutMs);
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  clearTimeout(timer);
+
+  if (timedOut) {
+    throw new RequestError("MiniClaw execution timed out after 180 seconds.", 504);
+  }
+
+  return {
+    command: "agent" as CliCommand,
+    commandLine: `${invocation.cliPath} ${args.map(formatArg).join(" ")}`,
+    stdout,
+    stderr,
+    exitCode,
+    durationMs: Date.now() - startedAt,
+    cliPath: invocation.cliPath,
+    binaryMode: invocation.binaryMode,
+    runAt: new Date().toISOString(),
+  };
+}
+
 const server = serve({
   port: frontendPort,
   routes: {
     "/api/health": async () => {
-      const binaryMode: BinaryMode = existsSync(miniclawBinaryPath) ? "binary" : "go-run";
+      const runtimeConfig = loadRuntimeConfig();
+      const binaryMode: BinaryMode = getBinaryMode(miniclawBinaryPath);
       return Response.json({
         ok: true,
+        service: "MiniClaw Frontend",
         port: frontendPort,
         repoRoot,
         frontendRoot,
+        homeDir: runtimeConfig.homeDir,
+        workspaceDir: runtimeConfig.workspaceDir,
+        configPath: runtimeConfig.configPath,
+        mcpConfigPath: runtimeConfig.mcpConfigPath,
         cliPath: binaryMode === "binary" ? "./miniclaw" : "go run cmd/miniclaw/main.go",
         binaryMode,
+        gatewayChannel: runtimeConfig.gatewayChannel,
+        llmBaseUrl: runtimeConfig.baseUrl,
+        llmModel: runtimeConfig.model,
+        hasLlmApiKey: Boolean(runtimeConfig.apiKey),
+        enableMcp: runtimeConfig.enableMcp,
+        enableAutoSkills: runtimeConfig.enableAutoSkills,
+        enableSkillScoring: runtimeConfig.enableSkillScoring,
+        qqWebhook: `http://${runtimeConfig.qqWebhookHost}:${runtimeConfig.qqWebhookPort}${runtimeConfig.qqWebhookPath}`,
+        qqAllowUsers: runtimeConfig.qqAllowUsers,
+        qqAllowGroups: runtimeConfig.qqAllowGroups,
+        weixinAllowUsers: runtimeConfig.weixinAllowUsers,
+        weixinConfigured: Boolean(runtimeConfig.weixinToken),
+        maxToolIterations: runtimeConfig.maxToolIterations,
         serverTime: new Date().toISOString(),
       });
+    },
+
+    "/api/dashboard": async () => Response.json(getDashboardSummary()),
+
+    "/api/tasks": {
+      async GET() {
+        return Response.json(listTasks());
+      },
+      async POST(request) {
+        try {
+          const payload = await parseJson<TaskWritePayload>(request);
+          return Response.json(saveTask(payload));
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+    },
+
+    "/api/tasks/item": {
+      async PUT(request) {
+        try {
+          const taskId = new URL(request.url).searchParams.get("id")?.trim();
+          if (!taskId) {
+            throw new RequestError("task id is required");
+          }
+          const payload = await parseJson<TaskWritePayload>(request);
+          return Response.json(saveTask(payload, taskId));
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+      async DELETE(request) {
+        try {
+          const taskId = new URL(request.url).searchParams.get("id")?.trim();
+          if (!taskId) {
+            throw new RequestError("task id is required");
+          }
+          deleteTask(taskId);
+          return Response.json({ ok: true });
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+    },
+
+    "/api/tasks/run": {
+      async POST(request) {
+        try {
+          const taskId = new URL(request.url).searchParams.get("id")?.trim();
+          if (!taskId) {
+            throw new RequestError("task id is required");
+          }
+          return Response.json(await runCronTrigger(taskId));
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+    },
+
+    "/api/runs": async () => Response.json(listRuns()),
+
+    "/api/run": async request => {
+      try {
+        const runId = new URL(request.url).searchParams.get("id")?.trim();
+        if (!runId) {
+          throw new RequestError("run id is required");
+        }
+        return Response.json(getRunDetail(runId));
+      } catch (error) {
+        return jsonError(error);
+      }
+    },
+
+    "/api/skills": {
+      async GET() {
+        return Response.json(listSkills());
+      },
+      async POST(request) {
+        try {
+          const payload = await parseJson<SkillWritePayload>(request);
+          return Response.json(saveSkill(payload));
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+    },
+
+    "/api/skills/item": {
+      async GET(request) {
+        try {
+          const slug = new URL(request.url).searchParams.get("slug")?.trim();
+          if (!slug) {
+            throw new RequestError("skill slug is required");
+          }
+          return Response.json(getSkillDetail(slug));
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+      async PUT(request) {
+        try {
+          const slug = new URL(request.url).searchParams.get("slug")?.trim();
+          if (!slug) {
+            throw new RequestError("skill slug is required");
+          }
+          const payload = await parseJson<SkillWritePayload>(request);
+          return Response.json(saveSkill(payload, slug));
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
+      async DELETE(request) {
+        try {
+          const slug = new URL(request.url).searchParams.get("slug")?.trim();
+          if (!slug) {
+            throw new RequestError("skill slug is required");
+          }
+          deleteSkill(slug);
+          return Response.json({ ok: true });
+        } catch (error) {
+          return jsonError(error);
+        }
+      },
     },
 
     "/api/status": async () => {

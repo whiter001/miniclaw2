@@ -1,109 +1,106 @@
-import { Alert, Button, Card, Col, Row, Space, Statistic, Tag, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Statistic, Table, Typography, message } from "antd";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { RunResultPanel } from "../components/RunResultPanel";
-import { emitPromptRequested } from "../workbenchEvents";
-import { useWorkspaceStatus } from "../workspaceStatus";
+import { fetchDashboardSummary, fetchHealth, type HealthResponse } from "../api";
+import { formatDateTime } from "../format";
+import { StatusTag } from "../components/StatusTag";
+import type { DashboardSummary, RunRecord } from "../types";
 
 export function DashboardPage() {
 	const navigate = useNavigate();
-	const { health, statusResult, loading, error, refreshWorkspace } = useWorkspaceStatus();
+	const [summary, setSummary] = useState<DashboardSummary | null>(null);
+	const [health, setHealth] = useState<HealthResponse | null>(null);
+	const [loading, setLoading] = useState(true);
 
-	function openAgentPrompt(prompt: string, section = "composer") {
-		emitPromptRequested(prompt);
-		navigate(`/agent#${section}`);
+	async function load() {
+		setLoading(true);
+		try {
+			const [summaryPayload, healthPayload] = await Promise.all([fetchDashboardSummary(), fetchHealth()]);
+			setSummary(summaryPayload);
+			setHealth(healthPayload);
+		} catch (error) {
+			message.error(error instanceof Error ? error.message : String(error));
+		} finally {
+			setLoading(false);
+		}
 	}
 
-	return (
-		<div className="page-stack">
-			<Card className="hero-card" bordered={false}>
-				<Space direction="vertical" size="large" className="hero-copy">
-					<div>
-						<Tag color="processing">MiniClaw Web Console</Tag>
-						<Typography.Title level={1}>在浏览器里直接调起本地 MiniClaw</Typography.Title>
-						<Typography.Paragraph className="hero-paragraph">
-							这个前端目录使用 Bun full-stack 运行，页面负责输入与展示，服务端负责执行本地 CLI，当前已接通
-							 <Typography.Text code>./miniclaw agent -p "..."</Typography.Text>
-							 和 <Typography.Text code>./miniclaw status</Typography.Text>。
-						</Typography.Paragraph>
-					</div>
-					<div className="hero-chip-row">
-						<span className="brand-chip">Ant Design</span>
-						<span className="brand-chip">React Router</span>
-						<span className="brand-chip">Bun Server</span>
-					</div>
-					<Space wrap size="small">
-						<Button type="primary" onClick={() => openAgentPrompt("总结当前运行时状态，并指出异常项和下一步建议")}>
-							生成诊断任务
-						</Button>
-						<Button onClick={() => openAgentPrompt("基于当前工作区状态，给出下一步执行清单")}>生成下一步建议</Button>
-						<Button onClick={() => navigate("/agent#history")}>查看运行记录</Button>
-						<Button onClick={() => void refreshWorkspace()} loading={loading}>
-							刷新状态
-						</Button>
-					</Space>
-				</Space>
-			</Card>
+	useEffect(() => {
+		void load();
+	}, []);
 
-			{error ? <Alert type="error" showIcon message="初始化失败" description={error} /> : null}
+	return (
+		<div className="page-section">
+			<div className="page-actions">
+				<div>
+					<Typography.Title level={4} className="page-title">仪表盘</Typography.Title>
+					<Typography.Text type="secondary" className="page-subtitle">
+						聚合工作区 cron、sessions 和 skills，快速确认当前运行面和最近执行情况。
+					</Typography.Text>
+				</div>
+				<Button onClick={() => void load()}>刷新</Button>
+			</div>
+
+			<Alert type="info" showIcon message="当前前端已接入真实工作区数据：任务和定时任务共用 cron 文件，执行记录来自 sessions，Skills 直接扫描 workspace 目录。" />
 
 			<Row gutter={[16, 16]}>
-				<Col xs={24} md={8}>
-					<Card className="metric-card" bordered={false}>
-						<Statistic title="CLI 模式" value={health?.binaryMode === "binary" ? "已构建二进制" : "go run 回退"} loading={loading} />
+				<Col xs={24} md={12} xl={6}>
+					<Card loading={loading} size="small" variant="outlined">
+						<Statistic title="任务总数" value={summary?.totalTasks ?? 0} />
 					</Card>
 				</Col>
-				<Col xs={24} md={8}>
-					<Card className="metric-card" bordered={false}>
-						<Statistic title="服务时间" value={health?.serverTime ? new Date(health.serverTime).toLocaleTimeString() : "--"} loading={loading} />
+				<Col xs={24} md={12} xl={6}>
+					<Card loading={loading} size="small" variant="outlined">
+						<Statistic title="Skills 总数" value={summary?.totalSkills ?? 0} />
 					</Card>
 				</Col>
-				<Col xs={24} md={8}>
-					<Card className="metric-card" bordered={false}>
-						<Statistic title="Repo Root" value={health?.repoRoot || "--"} loading={loading} />
+				<Col xs={24} md={12} xl={6}>
+					<Card loading={loading} size="small" variant="outlined">
+						<Statistic title="待处理队列" value={summary?.pendingQueueCount ?? 0} />
+					</Card>
+				</Col>
+				<Col xs={24} md={12} xl={6}>
+					<Card loading={loading} size="small" variant="outlined">
+						<Statistic title="今日成功 / 失败" value={`${summary?.successToday ?? 0} / ${summary?.failedToday ?? 0}`} />
 					</Card>
 				</Col>
 			</Row>
 
 			<Row gutter={[16, 16]}>
-				<Col xs={24} xl={10}>
-					<Card title="当前能力" className="panel-card">
-						<div className="summary-list">
-							<div>
-								<Typography.Text strong>执行 Agent Prompt</Typography.Text>
-								<Typography.Paragraph type="secondary">
-									通过 POST API 调用本地 MiniClaw CLI，回传 stdout、stderr、耗时和退出码。
-								</Typography.Paragraph>
-							</div>
-							<div>
-								<Typography.Text strong>快速查看状态</Typography.Text>
-								<Typography.Paragraph type="secondary">
-									首页会自动执行一次 <Typography.Text code>miniclaw status</Typography.Text>，方便确认运行时配置。
-								</Typography.Paragraph>
-							</div>
-							<div>
-								<Typography.Text strong>从状态直接发起任务</Typography.Text>
-								<Typography.Paragraph type="secondary">
-									概览页可以直接把当前状态转成诊断任务或下一步建议，无需手动复制上下文。
-								</Typography.Paragraph>
-							</div>
-							<div>
-								<Typography.Text strong>保留安全边界</Typography.Text>
-								<Typography.Paragraph type="secondary">
-									API 只开放受控命令，不接受任意 shell 执行，避免前端直接暴露系统命令入口。
-								</Typography.Paragraph>
-							</div>
+				<Col xs={24} xl={8}>
+					<Card title="当前工作区" size="small" variant="outlined" loading={loading}>
+						<div className="status-list">
+							<div className="status-line"><span>通道</span><strong>{health?.gatewayChannel ?? "-"}</strong></div>
+							<div className="status-line"><span>CLI 模式</span><strong>{health?.binaryMode === "binary" ? "已构建" : "go run"}</strong></div>
+							<div className="status-line"><span>当前运行任务</span><strong>{summary?.currentRunId ?? "-"}</strong></div>
+							<div className="status-line"><span>工作区目录</span><strong>{health?.workspaceDir ?? "-"}</strong></div>
+						</div>
+						<div className="button-row">
+							<Button size="small" onClick={() => navigate("/tasks")}>查看任务</Button>
+							<Button size="small" onClick={() => navigate("/skills")}>查看 Skills</Button>
 						</div>
 					</Card>
 				</Col>
-				<Col xs={24} xl={14}>
-					<RunResultPanel
-						title="miniclaw status"
-						loading={loading}
-						error={error}
-						result={statusResult}
-						emptyText="首页会自动请求一次 miniclaw status。"
-					/>
+				<Col xs={24} xl={16}>
+					<Card title="最近执行" size="small" variant="outlined">
+						<Table<RunRecord>
+							rowKey="id"
+							size="small"
+							pagination={false}
+							dataSource={summary?.recentRuns ?? []}
+							columns={[
+								{ title: "执行项", dataIndex: "title" },
+								{ title: "来源", dataIndex: "source", render: (value: string) => <StatusTag value={value} /> },
+								{ title: "状态", dataIndex: "status", render: (value: string) => <StatusTag value={value} /> },
+								{ title: "时间", dataIndex: "createdAt", render: (value: string) => formatDateTime(value) },
+								{
+									title: "操作",
+									render: (_value, record) => <Button size="small" onClick={() => navigate(`/runs?focus=${record.id}`)}>查看</Button>,
+								},
+							]}
+						/>
+					</Card>
 				</Col>
 			</Row>
 		</div>
