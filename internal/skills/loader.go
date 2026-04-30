@@ -114,9 +114,38 @@ func BuildContext(selected []Skill) string {
 		if skill.Metadata.Score > 0 {
 			headline += fmt.Sprintf(" [score %d]", skill.Metadata.Score)
 		}
-		lines = append(lines, fmt.Sprintf("%s: %s\n%s", headline, skill.Description, memory.LimitText(skill.Content, maxSkillContentChars)))
+		lines = append(lines, fmt.Sprintf("%s: %s\n%s", headline, skill.Description, memory.LimitText(promptSafeSkillContent(skill), maxSkillContentChars)))
 	}
 	return strings.Join(lines, "\n\n")
+}
+
+func promptSafeSkillContent(skill Skill) string {
+	if !skill.Metadata.Auto {
+		return skill.Content
+	}
+	return stripMarkdownSection(skill.Content, "## Recent Examples")
+}
+
+func stripMarkdownSection(content, heading string) string {
+	lines := strings.Split(content, "\n")
+	filtered := make([]string, 0, len(lines))
+	skipping := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if skipping {
+			if strings.HasPrefix(trimmed, "## ") {
+				skipping = false
+			} else {
+				continue
+			}
+		}
+		if strings.EqualFold(trimmed, heading) {
+			skipping = true
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.TrimRight(strings.Join(filtered, "\n"), "\n") + "\n"
 }
 
 func readSkill(path string) (Skill, error) {
@@ -172,12 +201,15 @@ func firstParagraph(content string) string {
 }
 
 func scoreSkill(skill Skill, tokens []string) int {
-	text := strings.ToLower(skill.Name + " " + skill.Description + " " + skill.Content + " " + strings.Join(skill.Metadata.Keywords, " "))
+	text := strings.ToLower(skill.Name + " " + skill.Description + " " + promptSafeSkillContent(skill) + " " + strings.Join(skill.Metadata.Keywords, " "))
 	score := 0
 	for _, token := range tokens {
 		if strings.Contains(text, token) {
 			score++
 		}
+	}
+	if score == 0 {
+		return 0
 	}
 	score += skill.Metadata.Score / 20
 	if skill.Metadata.SuccessCount > skill.Metadata.FailureCount {

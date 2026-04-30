@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	skillMetadataFileName      = "skill.json"
-	defaultAutoSkillExamples   = 5
-	maxExamplePromptChars      = 240
-	maxExampleResponseChars    = 360
-	minimumExistingSkillMatch  = 4
+	skillMetadataFileName     = "skill.json"
+	defaultAutoSkillExamples  = 5
+	maxExamplePromptChars     = 240
+	maxExampleResponseChars   = 360
+	minimumExistingSkillMatch = 4
 )
 
 type SkillMetadata struct {
@@ -300,15 +300,13 @@ func renderAutoSkill(name string, meta SkillMetadata) string {
 		}
 		lines = append(lines, fmt.Sprintf("%d. Finish with a focused validation command before stopping.", len(meta.Tools)+1))
 	}
-	lines = append(lines, "", "## Recent Examples")
+	lines = append(lines, "", "## Recent Captures")
 	if len(meta.Examples) == 0 {
-		lines = append(lines, "No successful examples captured yet.")
+		lines = append(lines, "No successful captures recorded yet.")
 	} else {
 		for index, example := range meta.Examples {
 			lines = append(lines,
-				fmt.Sprintf("### Example %d", index+1),
-				"Prompt: "+strings.TrimSpace(example.Prompt),
-				"Response: "+strings.TrimSpace(example.Response),
+				fmt.Sprintf("### Capture %d", index+1),
 			)
 			if len(example.ToolNames) > 0 {
 				lines = append(lines, "Tools: "+strings.Join(example.ToolNames, ", "))
