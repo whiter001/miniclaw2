@@ -3,7 +3,6 @@ package qq
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"crypto/ed25519"
 
 	"miniclaw2/internal/config"
 	gatewayruntime "miniclaw2/internal/gateway/runtime"
@@ -221,17 +218,7 @@ func BuildFailureMessage(errorMessage string) string {
 }
 
 func SignValidation(secret, eventTS, plainToken string) (string, error) {
-	if strings.TrimSpace(secret) == "" {
-		return "", fmt.Errorf("qq_app_secret is empty")
-	}
-	seed := secret
-	for len(seed) < ed25519.SeedSize {
-		seed += secret
-	}
-	seed = seed[:ed25519.SeedSize]
-	privateKey := ed25519.NewKeyFromSeed([]byte(seed))
-	signature := ed25519.Sign(privateKey, []byte(eventTS+plainToken))
-	return hex.EncodeToString(signature), nil
+	return signQQWebhookMessage(secret, []byte(eventTS+plainToken))
 }
 
 func parseFlexibleInt(raw json.RawMessage) (int, error) {

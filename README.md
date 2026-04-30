@@ -169,6 +169,7 @@ QQ 通道默认走 webhook 模式，适合公网入口明确、可配置回调�
 - access token 获取
 - bot profile 查询
 - webhook 验证
+- 事件回调签名校验（`X-Signature-Timestamp` / `X-Signature-Ed25519`）
 - 单聊 / 群聊事件解析
 - 白名单控制
 - 消息去重

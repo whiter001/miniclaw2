@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"miniclaw2/internal/config"
 )
@@ -117,6 +119,90 @@ func TestWebhookValidationReturnsSignature(t *testing.T) {
 	}
 	if payload["plain_token"] != "plain-token" || payload["signature"] == "" {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestWebhookEventRejectsMissingSignature(t *testing.T) {
+	workspace := t.TempDir()
+	handler := NewWebhookHandler(config.Config{Workspace: workspace, QQAppSecret: "secret-value", QQWebhookPath: "/webhook/qq"})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/webhook/qq", strings.NewReader(`{"t":"READY","d":{}}`))
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "signature timestamp") {
+		t.Fatalf("unexpected body: %s", recorder.Body.String())
+	}
+}
+
+func TestWebhookEventRejectsExpiredSignature(t *testing.T) {
+	body := []byte(`{"t":"READY","d":{}}`)
+	timestamp := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
+	signature, err := signQQWebhookPayload("secret-value", timestamp, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/webhook/qq", strings.NewReader(string(body)))
+	request.Header.Set("X-Signature-Timestamp", timestamp)
+	request.Header.Set("X-Signature-Ed25519", signature)
+
+	workspace := t.TempDir()
+	handler := NewWebhookHandler(config.Config{Workspace: workspace, QQAppSecret: "secret-value", QQWebhookPath: "/webhook/qq"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "allowed window") {
+		t.Fatalf("unexpected body: %s", recorder.Body.String())
+	}
+}
+
+func TestWebhookEventRejectsInvalidSignature(t *testing.T) {
+	signedBody := []byte(`{"t":"READY","d":{}}`)
+	actualBody := []byte(`{"t":"READY","d":{"tampered":true}}`)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature, err := signQQWebhookPayload("secret-value", timestamp, signedBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/webhook/qq", strings.NewReader(string(actualBody)))
+	request.Header.Set("X-Signature-Timestamp", timestamp)
+	request.Header.Set("X-Signature-Ed25519", signature)
+
+	workspace := t.TempDir()
+	handler := NewWebhookHandler(config.Config{Workspace: workspace, QQAppSecret: "secret-value", QQWebhookPath: "/webhook/qq"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unexpected status: %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "invalid qq webhook signature") {
+		t.Fatalf("unexpected body: %s", recorder.Body.String())
+	}
+}
+
+func TestWebhookEventAcceptsValidSignature(t *testing.T) {
+	body := []byte(`{"t":"READY","d":{}}`)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature, err := signQQWebhookPayload("secret-value", timestamp, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/webhook/qq", strings.NewReader(string(body)))
+	request.Header.Set("X-Signature-Timestamp", timestamp)
+	request.Header.Set("X-Signature-Ed25519", signature)
+
+	workspace := t.TempDir()
+	handler := NewWebhookHandler(config.Config{Workspace: workspace, QQAppSecret: "secret-value", QQWebhookPath: "/webhook/qq"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.TrimSpace(recorder.Body.String()) != `{"op":12}` {
+		t.Fatalf("unexpected body: %s", recorder.Body.String())
 	}
 }
 

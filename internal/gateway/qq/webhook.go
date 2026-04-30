@@ -107,6 +107,11 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONBytes(w, http.StatusOK, response)
 		return
 	}
+	if err := VerifyWebhookRequest(h.Config, r.Header, body, time.Now()); err != nil {
+		_ = AppendEventLog(h.Config, "event_signature_error", []byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
 	_ = AppendEventLog(h.Config, "event", body)
 	go h.processEventAsync(body)
 	writeJSON(w, http.StatusOK, map[string]int{"op": 12})
