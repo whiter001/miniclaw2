@@ -203,7 +203,11 @@ func runTask(ctx context.Context, cfg config.Config, task Task, now time.Time, f
 	response, runErr := executeAgent(runCtx, runCfg, task.Prompt, recorder)
 	cancel()
 	finishedAt := time.Now()
-	nextRunAt, nextErr := nextFutureRun(task, priorNextRun, scheduledAt, finishedAt, force)
+	scheduleReferenceAt := finishedAt
+	if force {
+		scheduleReferenceAt = now
+	}
+	nextRunAt, nextErr := nextFutureRun(task, priorNextRun, scheduledAt, scheduleReferenceAt, force)
 	if nextErr != nil && runErr == nil {
 		runErr = nextErr
 	}
