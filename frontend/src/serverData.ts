@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { DashboardSummary, RunDetail, RunMessage, RunRecord, SkillDetail, SkillRecord, SkillWritePayload, TaskRecord, TaskWritePayload } from "./types";
 
@@ -63,6 +63,7 @@ interface TaskStateInfo {
 }
 
 const defaultTaskTimeoutSeconds = 10 * 60;
+const skillSlugPattern = /^[a-zA-Z0-9._-]+$/;
 
 function defaultConfig(): RuntimeConfig {
   const userHome = homedir();
@@ -293,6 +294,27 @@ function sessionsDir(workspaceDir: string) {
 
 function skillsDir(workspaceDir: string) {
   return join(workspaceDir, "skills");
+}
+
+function normalizeSkillSlug(rawSlug: string, emptyMessage = "Skill slug 不能为空。") {
+  const slug = rawSlug.trim();
+  if (!slug) {
+    throw new Error(emptyMessage);
+  }
+  if (!skillSlugPattern.test(slug) || slug === "." || slug === "..") {
+    throw new Error("Skill slug 只能包含字母、数字、点、下划线和中划线，且不能是 . 或 ..。");
+  }
+  return slug;
+}
+
+function resolveSkillDir(workspaceDir: string, slug: string) {
+  const root = resolve(skillsDir(workspaceDir));
+  const target = resolve(root, slug);
+  const relativePath = relative(root, target);
+  if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new Error("Skill 路径必须位于 skills 目录内。");
+  }
+  return target;
 }
 
 function normalizeDate(value?: string) {
@@ -623,7 +645,8 @@ export function listSkills() {
 }
 
 export function getSkillDetail(slug: string): SkillDetail {
-  const skill = listSkills().find(item => item.slug === slug.trim());
+  const requestedSlug = normalizeSkillSlug(slug, "缺少 Skill slug。");
+  const skill = listSkills().find(item => item.slug === requestedSlug);
   if (!skill) {
     throw new Error("Skill 不存在。");
   }
@@ -638,22 +661,18 @@ export function getSkillDetail(slug: string): SkillDetail {
 }
 
 function validateSkillPayload(payload: SkillWritePayload, existingSlug?: string) {
-  const slug = payload.slug.trim();
-  if (!slug) {
-    throw new Error("Skill slug 不能为空。");
-  }
-  if (!/^[a-zA-Z0-9._-]+$/.test(slug)) {
-    throw new Error("Skill slug 只能包含字母、数字、点、下划线和中划线。");
-  }
+  const slug = normalizeSkillSlug(payload.slug);
+  const previousSlug = existingSlug === undefined ? "" : normalizeSkillSlug(existingSlug, "缺少 Skill slug。");
   if (!payload.name.trim()) {
     throw new Error("Skill 名称不能为空。");
   }
   if (!payload.content?.trim() && !payload.description?.trim()) {
     throw new Error("Skill 内容不能为空。");
   }
-  if (existingSlug && existingSlug !== slug && listSkills().some(item => item.slug === slug)) {
+  if (previousSlug && previousSlug !== slug && listSkills().some(item => item.slug === slug)) {
     throw new Error("同名 Skill 已存在。");
   }
+  return { slug, previousSlug };
 }
 
 function renderSkillDocument(payload: SkillWritePayload) {
@@ -670,15 +689,14 @@ function renderSkillDocument(payload: SkillWritePayload) {
 }
 
 export function saveSkill(payload: SkillWritePayload, existingSlug?: string) {
-  validateSkillPayload(payload, existingSlug);
+  const { slug, previousSlug } = validateSkillPayload(payload, existingSlug);
   const { workspaceDir } = loadRuntimeConfig();
-  const slug = payload.slug.trim();
-  const targetDir = join(skillsDir(workspaceDir), slug);
+  const targetDir = resolveSkillDir(workspaceDir, slug);
   mkdirSync(targetDir, { recursive: true });
   const targetFilePath = join(targetDir, "SKILL.md");
   writeFileSync(targetFilePath, renderSkillDocument(payload), "utf8");
-  if (existingSlug && existingSlug !== slug) {
-    const previousDir = join(skillsDir(workspaceDir), existingSlug);
+  if (previousSlug && previousSlug !== slug) {
+    const previousDir = resolveSkillDir(workspaceDir, previousSlug);
     if (existsSync(previousDir)) {
       rmSync(previousDir, { recursive: true, force: true });
     }
@@ -687,12 +705,9 @@ export function saveSkill(payload: SkillWritePayload, existingSlug?: string) {
 }
 
 export function deleteSkill(slug: string) {
-  const resolvedSlug = slug.trim();
-  if (!resolvedSlug) {
-    throw new Error("缺少 Skill slug。");
-  }
+  const resolvedSlug = normalizeSkillSlug(slug, "缺少 Skill slug。");
   const { workspaceDir } = loadRuntimeConfig();
-  rmSync(join(skillsDir(workspaceDir), resolvedSlug), { recursive: true, force: true });
+  rmSync(resolveSkillDir(workspaceDir, resolvedSlug), { recursive: true, force: true });
 }
 
 function isToday(value: string | null) {
