@@ -5,6 +5,7 @@ import type { DashboardSummary, RunDetail, RunRecord, SkillDetail, SkillRecord, 
 export interface HealthResponse {
 	ok: boolean;
 	service?: string;
+	host?: string;
 	port?: number;
 	repoRoot: string;
 	cliPath: string;
@@ -21,6 +22,7 @@ export interface HealthResponse {
 	enableMcp?: boolean;
 	enableAutoSkills?: boolean;
 	enableSkillScoring?: boolean;
+	authRequired?: boolean;
 	qqWebhook?: string;
 	qqAllowUsers?: string;
 	qqAllowGroups?: string;

@@ -44,7 +44,9 @@ export function SettingsPage() {
       <Card loading={loading} size="small" variant="outlined">
         <Descriptions column={1} bordered size="small">
           <Descriptions.Item label="服务名称">{health?.service ?? "-"}</Descriptions.Item>
+          <Descriptions.Item label="监听地址">{health?.host ?? "-"}</Descriptions.Item>
           <Descriptions.Item label="服务端口">{health?.port ?? "-"}</Descriptions.Item>
+          <Descriptions.Item label="访问保护">{health?.authRequired ? "已启用" : "-"}</Descriptions.Item>
           <Descriptions.Item label="仓库根目录">{health?.repoRoot ?? "-"}</Descriptions.Item>
           <Descriptions.Item label="前端目录">{health?.frontendRoot ?? "-"}</Descriptions.Item>
           <Descriptions.Item label="工作区目录">{health?.workspaceDir ?? "-"}</Descriptions.Item>

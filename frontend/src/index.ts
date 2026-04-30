@@ -1,6 +1,7 @@
 import { serve } from "bun";
 import { join, resolve } from "node:path";
 
+import { buildFrontendTokenURL, handleFrontendTokenRequest, resolveFrontendAccessToken, resolveFrontendHost, resolveFrontendPort, validateFrontendApiRequest } from "./frontendAuth";
 import index from "./index.html";
 import { deleteSkill, deleteTask, getBinaryMode, getDashboardSummary, getRunDetail, getSkillDetail, listRuns, listSkills, listTasks, loadRuntimeConfig, saveSkill, saveTask } from "./serverData";
 import type { SkillWritePayload, TaskWritePayload } from "./types";
@@ -28,17 +29,9 @@ const frontendRoot = resolve(import.meta.dir, "..");
 const repoRoot = resolve(frontendRoot, "..");
 const miniclawBinaryPath = join(repoRoot, "miniclaw");
 const requestTimeoutMs = 180_000;
-
-function resolveFrontendPort() {
-  const raw = process.env.MINICLAW_FRONTEND_PORT?.trim() || process.env.PORT?.trim() || "5020";
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed <= 0 || parsed > 65535) {
-    return 5020;
-  }
-  return parsed;
-}
-
 const frontendPort = resolveFrontendPort();
+const frontendHost = resolveFrontendHost();
+const frontendAccessToken = resolveFrontendAccessToken();
 
 function formatArg(value: string) {
   if (value === "") {
@@ -107,6 +100,22 @@ function jsonError(error: unknown) {
   }
   console.error(error);
   return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+}
+
+type RouteHandler = (request: Request) => Response | Promise<Response>;
+
+function withApiAuth(handler: RouteHandler): RouteHandler {
+  return async request => {
+    const auth = validateFrontendApiRequest(request, frontendAccessToken.token);
+    if (!auth.ok) {
+      return Response.json({ error: auth.message }, { status: auth.status });
+    }
+    return handler(request);
+  };
+}
+
+function serveFrontend(request: Request) {
+  return handleFrontendTokenRequest(request, frontendAccessToken.token) ?? index;
 }
 
 async function runCli(payload: CliRunRequest) {
@@ -200,14 +209,16 @@ async function runCronTrigger(taskId: string) {
 }
 
 const server = serve({
+  hostname: frontendHost,
   port: frontendPort,
   routes: {
-    "/api/health": async () => {
+    "/api/health": withApiAuth(async () => {
       const runtimeConfig = loadRuntimeConfig();
       const binaryMode: BinaryMode = getBinaryMode(miniclawBinaryPath);
       return Response.json({
         ok: true,
         service: "MiniClaw Frontend",
+        host: frontendHost,
         port: frontendPort,
         repoRoot,
         frontendRoot,
@@ -224,6 +235,7 @@ const server = serve({
         enableMcp: runtimeConfig.enableMcp,
         enableAutoSkills: runtimeConfig.enableAutoSkills,
         enableSkillScoring: runtimeConfig.enableSkillScoring,
+        authRequired: true,
         qqWebhook: `http://${runtimeConfig.qqWebhookHost}:${runtimeConfig.qqWebhookPort}${runtimeConfig.qqWebhookPath}`,
         qqAllowUsers: runtimeConfig.qqAllowUsers,
         qqAllowGroups: runtimeConfig.qqAllowGroups,
@@ -232,26 +244,26 @@ const server = serve({
         maxToolIterations: runtimeConfig.maxToolIterations,
         serverTime: new Date().toISOString(),
       });
-    },
+    }),
 
-    "/api/dashboard": async () => Response.json(getDashboardSummary()),
+    "/api/dashboard": withApiAuth(async () => Response.json(getDashboardSummary())),
 
     "/api/tasks": {
-      async GET() {
+      GET: withApiAuth(async () => {
         return Response.json(listTasks());
-      },
-      async POST(request) {
+      }),
+      POST: withApiAuth(async request => {
         try {
           const payload = await parseJson<TaskWritePayload>(request);
           return Response.json(saveTask(payload));
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
     "/api/tasks/item": {
-      async PUT(request) {
+      PUT: withApiAuth(async request => {
         try {
           const taskId = new URL(request.url).searchParams.get("id")?.trim();
           if (!taskId) {
@@ -262,8 +274,8 @@ const server = serve({
         } catch (error) {
           return jsonError(error);
         }
-      },
-      async DELETE(request) {
+      }),
+      DELETE: withApiAuth(async request => {
         try {
           const taskId = new URL(request.url).searchParams.get("id")?.trim();
           if (!taskId) {
@@ -274,11 +286,11 @@ const server = serve({
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
     "/api/tasks/run": {
-      async POST(request) {
+      POST: withApiAuth(async request => {
         try {
           const taskId = new URL(request.url).searchParams.get("id")?.trim();
           if (!taskId) {
@@ -288,12 +300,12 @@ const server = serve({
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
-    "/api/runs": async () => Response.json(listRuns()),
+    "/api/runs": withApiAuth(async () => Response.json(listRuns())),
 
-    "/api/run": async request => {
+    "/api/run": withApiAuth(async request => {
       try {
         const runId = new URL(request.url).searchParams.get("id")?.trim();
         if (!runId) {
@@ -303,24 +315,24 @@ const server = serve({
       } catch (error) {
         return jsonError(error);
       }
-    },
+    }),
 
     "/api/skills": {
-      async GET() {
+      GET: withApiAuth(async () => {
         return Response.json(listSkills());
-      },
-      async POST(request) {
+      }),
+      POST: withApiAuth(async request => {
         try {
           const payload = await parseJson<SkillWritePayload>(request);
           return Response.json(saveSkill(payload));
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
     "/api/skills/item": {
-      async GET(request) {
+      GET: withApiAuth(async request => {
         try {
           const slug = new URL(request.url).searchParams.get("slug")?.trim();
           if (!slug) {
@@ -330,8 +342,8 @@ const server = serve({
         } catch (error) {
           return jsonError(error);
         }
-      },
-      async PUT(request) {
+      }),
+      PUT: withApiAuth(async request => {
         try {
           const slug = new URL(request.url).searchParams.get("slug")?.trim();
           if (!slug) {
@@ -342,8 +354,8 @@ const server = serve({
         } catch (error) {
           return jsonError(error);
         }
-      },
-      async DELETE(request) {
+      }),
+      DELETE: withApiAuth(async request => {
         try {
           const slug = new URL(request.url).searchParams.get("slug")?.trim();
           if (!slug) {
@@ -354,40 +366,40 @@ const server = serve({
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
-    "/api/status": async () => {
+    "/api/status": withApiAuth(async () => {
       try {
         return Response.json(await runCli({ command: "status" }));
       } catch (error) {
         return jsonError(error);
       }
-    },
+    }),
 
     "/api/agent/run": {
-      async POST(request) {
+      POST: withApiAuth(async request => {
         try {
           const payload = await parseJson<CliRunRequest>(request);
           return Response.json(await runCli({ ...payload, command: "agent" }));
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
     "/api/cli/run": {
-      async POST(request) {
+      POST: withApiAuth(async request => {
         try {
           const payload = await parseJson<CliRunRequest>(request);
           return Response.json(await runCli(payload));
         } catch (error) {
           return jsonError(error);
         }
-      },
+      }),
     },
 
-    "/*": index,
+    "/*": serveFrontend,
   },
 
   development: process.env.NODE_ENV !== "production" && {
@@ -399,4 +411,9 @@ const server = serve({
   },
 });
 
-console.log(`🚀 Server running at ${server.url}`);
+console.log(`Server running at ${server.url}`);
+if (frontendAccessToken.generated) {
+  console.log(`Open ${buildFrontendTokenURL(server.url.toString(), frontendAccessToken.token)} to authorize this browser.`);
+} else {
+  console.log("Frontend access token is loaded from MINICLAW_FRONTEND_TOKEN.");
+}
