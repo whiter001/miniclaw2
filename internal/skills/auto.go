@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,9 +60,60 @@ type sessionExperience struct {
 	Prompt              string
 	Response            string
 	ToolNames           []string
+	ToolResults         []toolResult
 	SuccessfulToolCount int
 	FailedToolCount     int
 	Keywords            []string
+}
+
+type toolResult struct {
+	Name    string
+	Content string
+	IsError bool
+}
+
+var (
+	requestedCountPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:top|first|latest)\s+(\d+)\s*(?:items?|results?|messages?|tweets?|posts?|records?|entries?|questions?|answers?|replies?)\b`),
+		regexp.MustCompile(`(?i)\b(\d+)\s*(?:items?|results?|messages?|tweets?|posts?|records?|entries?|questions?|answers?|replies?)\b`),
+		regexp.MustCompile(`(\d+)\s*(?:条|个|篇|项|道|题)\s*(?:消息|推文|帖子|结果|记录|内容|问题|题目|题|回答|回复)?`),
+	}
+	limitedResultCountPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?:只|仅|目前只|当前只|当前页面只|只能|仅能)\s*(?:显示|获取|返回|找到|抓取|加载|看到|提供)?\s*[^\d]{0,12}(\d+)\s*(?:条|个|篇|项)?`),
+		regexp.MustCompile(`(?i)(?:only|just|currently|could only|limited to)\s*(?:show|display|find|fetch|get|return|load)?(?:ed|s)?\s*[^\d]{0,12}(\d+)\s*(?:items?|results?|messages?|tweets?|posts?|records?|entries?)?`),
+	}
+	answerRequestPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`答\s*\d*\s*(?:道|个)?\s*(?:题|问题|题目)`),
+		regexp.MustCompile(`(?:回答|作答|答复|回复)\s*\d*\s*(?:道|个)?\s*(?:题|问题|题目)`),
+		regexp.MustCompile(`(?i)\b(?:answer|reply to|respond to)\s+\d*\s*(?:questions?|replies?)\b`),
+	}
+	answerSubmissionPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?:提交回答|提交答案|发布回答|发布答案|发表回答|发送回复|提交回复|发布回复)`),
+		regexp.MustCompile(`(?i)\b(?:submitted answer|posted answer|answered successfully|reply sent)\b`),
+	}
+)
+
+var finalFailureMarkers = []string{
+	"couldn't be completed", "unable to complete", "task failed", "i'm sorry", "sorry, but",
+	"requires login", "need to log in", "please log in", "publish failed", "submit failed",
+	"failed to publish", "unable to submit", "not published", "submission blocked", "publish blocked",
+	"anti-automation", "blocked by anti-automation",
+	"很抱歉", "无法完成", "未能完成", "无法处理", "未能处理", "无法回答", "未能回答",
+	"无法继续", "未能继续", "请先登录", "需要登录", "登录验证", "发布失败", "提交失败",
+	"无法发布", "未能发布", "无法提交", "未能提交", "未提交成功", "提交未成功",
+	"反自动化", "被阻止", "似乎被阻止",
+}
+
+var partialCompletionMarkers = []string{
+	"只显示了", "仅显示了", "只获取了", "仅获取了", "只返回了", "仅返回了", "只加载了", "仅加载了",
+	"只能获取", "只能返回", "当前页面只显示", "目前只显示", "无法获取更多", "未能获取更多", "数量有限",
+	"only showed", "only displayed", "only found", "only returned", "only loaded", "could only", "currently only",
+	"unable to fetch more", "could not fetch more", "limited to",
+}
+
+var answerActionContextMarkers = []string{
+	"autobrowser", "百度知道", "知乎", "zhidao.baidu", "zhihu.com", "http://", "https://",
+	"页面", "网站", "网页", "发布", "提交", "post", "publish", "submit", "answer box", "reply box",
 }
 
 var skillStoreMu sync.Mutex
@@ -120,11 +173,118 @@ func AutoCaptureSession(cfg config.Config, sessionPath, prompt, response string)
 	if hasTooManyFailedTools(experience) {
 		return nil
 	}
+	if !passesAutoSkillQualityGate(experience) {
+		return nil
+	}
 	return upsertAutoSkill(cfg, experience)
 }
 
 func hasTooManyFailedTools(experience sessionExperience) bool {
 	return experience.FailedToolCount > 0 && experience.FailedToolCount > experience.SuccessfulToolCount/2
+}
+
+func passesAutoSkillQualityGate(experience sessionExperience) bool {
+	if looksLikeFinalFailure(experience.Response) {
+		return false
+	}
+	if hasPartialCompletion(experience.Prompt, experience.Response) {
+		return false
+	}
+	if requestedAnswerActionMissing(experience) {
+		return false
+	}
+	return true
+}
+
+func looksLikeFinalFailure(response string) bool {
+	return containsAny(strings.ToLower(response), finalFailureMarkers)
+}
+
+func hasPartialCompletion(prompt, response string) bool {
+	requestedCount := extractRequestedCount(prompt)
+	if requestedCount <= 1 {
+		return false
+	}
+	reportedCount := extractLimitedResultCount(response)
+	if reportedCount > 0 && reportedCount < requestedCount {
+		return true
+	}
+	return containsAny(strings.ToLower(response), partialCompletionMarkers)
+}
+
+func requestedAnswerActionMissing(experience sessionExperience) bool {
+	if !isExternalAnswerRequest(experience.Prompt) {
+		return false
+	}
+	requiredCount := extractRequestedCount(experience.Prompt)
+	if requiredCount <= 0 {
+		requiredCount = 1
+	}
+	return countObservedAnswerSubmissions(experience.ToolResults) < requiredCount
+}
+
+func isExternalAnswerRequest(prompt string) bool {
+	if !matchesAnyPattern(prompt, answerRequestPatterns) {
+		return false
+	}
+	return containsAny(strings.ToLower(prompt), answerActionContextMarkers)
+}
+
+func countObservedAnswerSubmissions(results []toolResult) int {
+	count := 0
+	for _, result := range results {
+		if result.IsError {
+			continue
+		}
+		content := strings.TrimSpace(result.Content)
+		if content == "" || looksLikeFinalFailure(content) {
+			continue
+		}
+		if matchesAnyPattern(content, answerSubmissionPatterns) {
+			count++
+		}
+	}
+	return count
+}
+
+func extractRequestedCount(text string) int {
+	return extractFirstPositiveCount(text, requestedCountPatterns)
+}
+
+func extractLimitedResultCount(text string) int {
+	return extractFirstPositiveCount(text, limitedResultCountPatterns)
+}
+
+func extractFirstPositiveCount(text string, patterns []*regexp.Regexp) int {
+	for _, pattern := range patterns {
+		match := pattern.FindStringSubmatch(text)
+		if len(match) < 2 {
+			continue
+		}
+		count, err := strconv.Atoi(match[1])
+		if err == nil && count > 0 {
+			return count
+		}
+	}
+	return 0
+}
+
+func matchesAnyPattern(text string, patterns []*regexp.Regexp) bool {
+	for _, pattern := range patterns {
+		if pattern.MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAny(text string, markers []string) bool {
+	for _, marker := range markers {
+		if strings.Contains(text, strings.ToLower(marker)) {
+			return true
+		}
+	}
+	return false
 }
 
 func readSkillMetadata(path string) (SkillMetadata, error) {
@@ -213,6 +373,7 @@ func readSessionExperience(path string) (sessionExperience, error) {
 			if strings.EqualFold(strings.TrimSpace(line.Content), "invoked") {
 				continue
 			}
+			experience.ToolResults = append(experience.ToolResults, toolResult{Name: line.ToolName, Content: strings.TrimSpace(line.Content), IsError: line.IsError})
 			if line.IsError {
 				experience.FailedToolCount++
 				continue

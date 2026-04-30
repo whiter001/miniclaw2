@@ -323,6 +323,101 @@ func TestAutoCaptureSessionSkipsFailureHeavyRuns(t *testing.T) {
 	}
 }
 
+func TestAutoCaptureSessionSkipsFinalFailureSummary(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-login-blocked.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "用 autobrowser 抓取页面内容"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "loaded notes"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "opened page"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "很抱歉，当前页面需要登录，无法完成抓取。"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := Discover(filepath.Join(workspace, "skills")); len(loaded) != 0 {
+		t.Fatalf("expected failed final summary to be skipped, got %+v", loaded)
+	}
+}
+
+func TestAutoCaptureSessionSkipsPartialCompletion(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-partial-count.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "用 autobrowser 获取 x.com 里的 15 条消息"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "opened feed"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "extracted visible items"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "当前页面只显示了 4 条推文，未能获取更多。"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := Discover(filepath.Join(workspace, "skills")); len(loaded) != 0 {
+		t.Fatalf("expected partial completion to be skipped, got %+v", loaded)
+	}
+}
+
+func TestAutoCaptureSessionSkipsAnsweringWithoutSubmission(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-answer-browse-only.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "用autobrowser帮我在百度知道里答3道题"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Opened question 1 with 我来答"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Opened question 2 with 我来答"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Opened question 3 with 我来答"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "我已经成功访问了百度知道推荐问题页面中的3道题，这些题目都已有人回答。"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := Discover(filepath.Join(workspace, "skills")); len(loaded) != 0 {
+		t.Fatalf("expected browse-only answering run to be skipped, got %+v", loaded)
+	}
+}
+
+func TestAutoCaptureSessionAllowsAnsweringWithSubmission(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-answer-submitted.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "用autobrowser帮我在百度知道里答3道题"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "提交回答成功 1"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "提交回答成功 2"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "提交回答成功 3"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "已成功回答3道题，并提交了对应答案。"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected submitted answering workflow to be captured, got %d", len(loaded))
+	}
+}
+
 func TestAutoCaptureSessionSplitsMixedPunctuationKeywords(t *testing.T) {
 	workspace := t.TempDir()
 	cfg := config.Default()
