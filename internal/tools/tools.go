@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,12 +15,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"miniclaw2/internal/config"
 )
 
 const maxExecOutputChars = 12000
+const maxExecOutputBytes = 64 * 1024
 
 var blockedExecPatterns = []string{
 	"rm -rf",
@@ -77,6 +80,13 @@ func Definitions() []ToolDefinition {
 }
 
 func Execute(tool ToolUse, cfg config.Config) (string, error) {
+	return ExecuteWithContext(context.Background(), tool, cfg)
+}
+
+func ExecuteWithContext(ctx context.Context, tool ToolUse, cfg config.Config) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	switch tool.Name {
 	case "list_dir":
 		return toolListDir(tool, cfg)
@@ -85,7 +95,7 @@ func Execute(tool ToolUse, cfg config.Config) (string, error) {
 	case "write_file":
 		return toolWriteFile(tool, cfg)
 	case "exec":
-		return toolExec(tool, cfg)
+		return toolExec(ctx, tool, cfg)
 	case "grep_search":
 		return toolGrepSearch(tool, cfg)
 	default:
@@ -185,7 +195,7 @@ func toolWriteFile(tool ToolUse, cfg config.Config) (string, error) {
 	return fmt.Sprintf("wrote %s (%d chars)", relPath, len(content)), nil
 }
 
-func toolExec(tool ToolUse, cfg config.Config) (string, error) {
+func toolExec(ctx context.Context, tool ToolUse, cfg config.Config) (string, error) {
 	command := firstNonEmpty(tool.Input["command"], tool.Input["cmd"])
 	if command == "" {
 		return "", errors.New("command is required")
@@ -195,20 +205,24 @@ func toolExec(tool ToolUse, cfg config.Config) (string, error) {
 	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd.exe", "/C", command)
+		cmd = exec.CommandContext(ctx, "cmd.exe", "/C", command)
 	} else {
-		cmd = exec.Command("sh", "-lc", command)
+		cmd = exec.CommandContext(ctx, "sh", "-lc", command)
 	}
 	cmd.Dir = cfg.Workspace
-	output, err := cmd.CombinedOutput()
-	trimmed := strings.TrimSpace(string(output))
+	configureExecCommand(cmd)
+	output := newCappedOutputBuffer(maxExecOutputBytes)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
+	trimmed := trimExecOutput(output.String(), output.Truncated())
 	if trimmed == "" {
 		trimmed = "(no output)"
 	}
-	if len(trimmed) > maxExecOutputChars {
-		trimmed = trimmed[:maxExecOutputChars] + "\n... (truncated)"
-	}
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("exec command canceled: %w", ctxErr)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return "", fmt.Errorf("exit code %d: %s", exitErr.ExitCode(), trimmed)
@@ -216,6 +230,75 @@ func toolExec(tool ToolUse, cfg config.Config) (string, error) {
 		return "", err
 	}
 	return trimmed, nil
+}
+
+type cappedOutputBuffer struct {
+	mu        sync.Mutex
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newCappedOutputBuffer(limit int) *cappedOutputBuffer {
+	if limit <= 0 {
+		limit = maxExecOutputBytes
+	}
+	return &cappedOutputBuffer{limit: limit}
+}
+
+func (b *cappedOutputBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	remaining := b.limit - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buffer.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	_, _ = b.buffer.Write(p)
+	return len(p), nil
+}
+
+func (b *cappedOutputBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
+func (b *cappedOutputBuffer) Truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.truncated
+}
+
+func trimExecOutput(value string, truncated bool) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed, charTruncated := truncateRunes(trimmed, maxExecOutputChars)
+	if truncated || charTruncated {
+		trimmed += "\n... (truncated)"
+	}
+	return trimmed
+}
+
+func truncateRunes(value string, limit int) (string, bool) {
+	if limit <= 0 {
+		return "", value != ""
+	}
+	count := 0
+	for index := range value {
+		if count == limit {
+			return value[:index], true
+		}
+		count++
+	}
+	return value, false
 }
 
 func toolGrepSearch(tool ToolUse, cfg config.Config) (string, error) {

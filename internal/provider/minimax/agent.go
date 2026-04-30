@@ -140,7 +140,7 @@ func responseToRequestBlocks(blocks []responseContentBlock) []requestContentBloc
 
 func executeEffectiveTool(ctx context.Context, toolUse ToolUse, cfg config.Config, manager *mcp.Manager) (string, error) {
 	localInput := stringifyToolInput(toolUse.Input)
-	result, err := tools.Execute(tools.ToolUse{ID: toolUse.ID, Name: toolUse.Name, Input: localInput}, cfg)
+	result, err := tools.ExecuteWithContext(ctx, tools.ToolUse{ID: toolUse.ID, Name: toolUse.Name, Input: localInput}, cfg)
 	if err == nil {
 		return result, nil
 	}

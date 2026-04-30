@@ -1,10 +1,14 @@
 package tools
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"miniclaw2/internal/config"
 )
@@ -41,6 +45,41 @@ func TestExecBlocksDangerousCommand(t *testing.T) {
 	tool := ToolUse{Name: "exec", Input: map[string]string{"command": "rm -rf tmp-danger"}}
 	if _, err := Execute(tool, cfg); err == nil || !strings.Contains(err.Error(), "blocked") {
 		t.Fatalf("expected blocked error, got %v", err)
+	}
+}
+
+func TestExecHonorsContextCancellation(t *testing.T) {
+	cfg := config.Config{Workspace: t.TempDir()}
+	command := "sleep 2"
+	if runtime.GOOS == "windows" {
+		command = "ping -n 3 127.0.0.1 >NUL"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	_, err := ExecuteWithContext(ctx, ToolUse{Name: "exec", Input: map[string]string{"command": command}}, cfg)
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("exec cancellation took too long: %s", elapsed)
+	}
+}
+
+func TestCappedOutputBufferTruncates(t *testing.T) {
+	buffer := newCappedOutputBuffer(4)
+	if n, err := buffer.Write([]byte("abcdef")); err != nil || n != 6 {
+		t.Fatalf("unexpected write result: n=%d err=%v", n, err)
+	}
+	if !buffer.Truncated() {
+		t.Fatal("expected buffer to be marked truncated")
+	}
+	got := trimExecOutput(buffer.String(), buffer.Truncated())
+	if got != "abcd\n... (truncated)" {
+		t.Fatalf("unexpected output: %q", got)
 	}
 }
 
