@@ -31,6 +31,10 @@ type Skill struct {
 }
 
 func Discover(directories ...string) []Skill {
+	return discoverSkills(false, directories...)
+}
+
+func discoverSkills(includeInternal bool, directories ...string) []Skill {
 	skills := []Skill{}
 	seen := map[string]struct{}{}
 	for _, directory := range directories {
@@ -42,7 +46,16 @@ func Discover(directories ...string) []Skill {
 			if err != nil {
 				return nil
 			}
-			if d == nil || d.IsDir() || strings.ToUpper(d.Name()) != "SKILL.MD" {
+			if d == nil {
+				return nil
+			}
+			if d.IsDir() {
+				if !includeInternal && isInternalSkillDir(d.Name()) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.ToUpper(d.Name()) != "SKILL.MD" {
 				return nil
 			}
 			if _, ok := seen[path]; ok {
@@ -61,6 +74,10 @@ func Discover(directories ...string) []Skill {
 		return strings.ToLower(skills[i].Name) < strings.ToLower(skills[j].Name)
 	})
 	return skills
+}
+
+func isInternalSkillDir(name string) bool {
+	return name == candidateSkillDirName || name == archivedSkillDirName
 }
 
 func Select(query string, maxSkills int, loaded []Skill) []Skill {

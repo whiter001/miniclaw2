@@ -18,16 +18,21 @@ workspace/
         testing/
             SKILL.md
             skill.json
+        _candidates/
+            autoskill-some-workflow/
+                SKILL.md
+                skill.json
 ```
 
 约定：
 
 - `SKILL.md` 是给 agent 看的技能说明正文
 - `skill.json` 是结构化元数据，保存评分、关键词、推荐工具、示例、命中统计等
+- `_candidates/` 保存低置信度 autoskill 候选，默认不会自动注入 agent prompt
 
 ## 运行时加载
 
-每轮 agent 执行前，MiniClaw 会扫描 `workspace/skills/` 下的 `SKILL.md`。
+每轮 agent 执行前，MiniClaw 会扫描 `workspace/skills/` 下的 `SKILL.md`，但会跳过 `_candidates/` 和 `_archived/` 这类内部目录。
 
 当前选择逻辑：
 
@@ -43,8 +48,17 @@ workspace/
 
 如果一轮任务成功完成，并且成功工具调用数量达到阈值，MiniClaw 会从 session 日志里自动提炼经验，创建或更新 autoskill。
 
+autoskill 分为两层：
+
+- `approved`：写入 `workspace/skills/<name>/`，会参与后续自动检索和注入
+- `candidate`：写入 `workspace/skills/_candidates/<name>/`，保留供检查，但不会自动加载
+
+恢复型运行、带少量失败但最终完成的运行通常先进入 `candidate`；后续同族任务如果出现更干净的成功轨迹，会自动提升到 `approved`。
+
 autoskill 会自动记录：
 
+- tier 和质量分
+- 质量原因与警告
 - 关键词
 - 推荐工具
 - 最近成功示例

@@ -20,25 +20,35 @@ import (
 
 const (
 	skillMetadataFileName     = "skill.json"
+	autoSkillTierApproved     = "approved"
+	autoSkillTierCandidate    = "candidate"
+	candidateSkillDirName     = "_candidates"
+	archivedSkillDirName      = "_archived"
 	defaultAutoSkillExamples  = 5
 	maxExamplePromptChars     = 240
 	maxExampleResponseChars   = 360
 	minimumExistingSkillMatch = 4
+	autoSkillCandidateScore   = 4
+	autoSkillApprovedScore    = 7
 )
 
 type SkillMetadata struct {
-	Slug          string         `json:"slug,omitempty"`
-	Auto          bool           `json:"auto,omitempty"`
-	Score         int            `json:"score,omitempty"`
-	CaptureCount  int            `json:"capture_count,omitempty"`
-	SelectedCount int            `json:"selected_count,omitempty"`
-	SuccessCount  int            `json:"success_count,omitempty"`
-	FailureCount  int            `json:"failure_count,omitempty"`
-	Keywords      []string       `json:"keywords,omitempty"`
-	Tools         []string       `json:"tools,omitempty"`
-	Examples      []SkillExample `json:"examples,omitempty"`
-	CreatedAt     string         `json:"created_at,omitempty"`
-	UpdatedAt     string         `json:"updated_at,omitempty"`
+	Slug            string         `json:"slug,omitempty"`
+	Auto            bool           `json:"auto,omitempty"`
+	Tier            string         `json:"tier,omitempty"`
+	Score           int            `json:"score,omitempty"`
+	QualityScore    int            `json:"quality_score,omitempty"`
+	QualityReasons  []string       `json:"quality_reasons,omitempty"`
+	QualityWarnings []string       `json:"quality_warnings,omitempty"`
+	CaptureCount    int            `json:"capture_count,omitempty"`
+	SelectedCount   int            `json:"selected_count,omitempty"`
+	SuccessCount    int            `json:"success_count,omitempty"`
+	FailureCount    int            `json:"failure_count,omitempty"`
+	Keywords        []string       `json:"keywords,omitempty"`
+	Tools           []string       `json:"tools,omitempty"`
+	Examples        []SkillExample `json:"examples,omitempty"`
+	CreatedAt       string         `json:"created_at,omitempty"`
+	UpdatedAt       string         `json:"updated_at,omitempty"`
 }
 
 type SkillExample struct {
@@ -70,6 +80,14 @@ type toolResult struct {
 	Name    string
 	Content string
 	IsError bool
+}
+
+type autoSkillQualityReport struct {
+	ShouldCreate bool
+	Tier         string
+	Score        int
+	Reasons      []string
+	Warnings     []string
 }
 
 var (
@@ -114,6 +132,11 @@ var partialCompletionMarkers = []string{
 var answerActionContextMarkers = []string{
 	"autobrowser", "百度知道", "知乎", "zhidao.baidu", "zhihu.com", "http://", "https://",
 	"页面", "网站", "网页", "发布", "提交", "post", "publish", "submit", "answer box", "reply box",
+}
+
+var validationMarkers = []string{
+	"test", "tests", "testing", "passed", "0 failed", "ok ", "lint", "validate", "validated",
+	"verify", "verified", "check", "checked", "diff", "status", "测试", "验证", "校验", "通过",
 }
 
 var skillStoreMu sync.Mutex
@@ -170,30 +193,80 @@ func AutoCaptureSession(cfg config.Config, sessionPath, prompt, response string)
 	if experience.SuccessfulToolCount < cfg.AutoSkillMinToolCalls {
 		return nil
 	}
-	if hasTooManyFailedTools(experience) {
+	quality := evaluateAutoSkillQuality(cfg, experience)
+	if !quality.ShouldCreate {
 		return nil
 	}
-	if !passesAutoSkillQualityGate(experience) {
-		return nil
-	}
-	return upsertAutoSkill(cfg, experience)
+	return upsertAutoSkill(cfg, experience, quality)
 }
 
 func hasTooManyFailedTools(experience sessionExperience) bool {
 	return experience.FailedToolCount > 0 && experience.FailedToolCount > experience.SuccessfulToolCount/2
 }
 
-func passesAutoSkillQualityGate(experience sessionExperience) bool {
+func evaluateAutoSkillQuality(cfg config.Config, experience sessionExperience) autoSkillQualityReport {
+	report := autoSkillQualityReport{}
+
+	if hasTooManyFailedTools(experience) {
+		report.Warnings = append(report.Warnings, "too-many-failed-tools")
+		return report
+	}
 	if looksLikeFinalFailure(experience.Response) {
-		return false
+		report.Warnings = append(report.Warnings, "final-result-not-successful")
+		return report
 	}
 	if hasPartialCompletion(experience.Prompt, experience.Response) {
-		return false
+		report.Warnings = append(report.Warnings, "partial-completion-detected")
+		return report
 	}
 	if requestedAnswerActionMissing(experience) {
-		return false
+		report.Warnings = append(report.Warnings, "requested-action-not-observed")
+		return report
 	}
-	return true
+
+	report.Score += 2
+	report.Reasons = append(report.Reasons, "final-result-successful")
+	if experience.SuccessfulToolCount >= cfg.AutoSkillMinToolCalls {
+		report.Score += 2
+		report.Reasons = append(report.Reasons, "multi-step-workflow")
+	}
+	if experience.SuccessfulToolCount >= cfg.AutoSkillMinToolCalls+2 {
+		report.Score++
+		report.Reasons = append(report.Reasons, "extra-tool-evidence")
+	}
+	if len(experience.ToolNames) >= 2 {
+		report.Score++
+		report.Reasons = append(report.Reasons, "multi-tool-workflow")
+	}
+	if isExternalAnswerRequest(experience.Prompt) {
+		report.Score += 2
+		report.Reasons = append(report.Reasons, "requested-action-observed")
+	}
+	if experience.FailedToolCount == 0 {
+		report.Score += 2
+		report.Reasons = append(report.Reasons, "clean-run")
+	} else {
+		report.Warnings = append(report.Warnings, "recovered-from-failure")
+	}
+	if hasValidationSignal(experience) {
+		report.Score++
+		report.Reasons = append(report.Reasons, "has-validation-signal")
+	}
+	if len([]rune(strings.TrimSpace(experience.Response))) >= 24 {
+		report.Score++
+		report.Reasons = append(report.Reasons, "specific-final-outcome")
+	}
+
+	if report.Score < autoSkillCandidateScore {
+		report.Warnings = append(report.Warnings, "quality-score-too-low")
+		return report
+	}
+	report.ShouldCreate = true
+	report.Tier = autoSkillTierCandidate
+	if report.Score >= autoSkillApprovedScore {
+		report.Tier = autoSkillTierApproved
+	}
+	return report
 }
 
 func looksLikeFinalFailure(response string) bool {
@@ -247,6 +320,18 @@ func countObservedAnswerSubmissions(results []toolResult) int {
 	return count
 }
 
+func hasValidationSignal(experience sessionExperience) bool {
+	for _, result := range experience.ToolResults {
+		if result.IsError {
+			continue
+		}
+		if containsAny(strings.ToLower(result.Content), validationMarkers) {
+			return true
+		}
+	}
+	return containsAny(strings.ToLower(experience.Response), validationMarkers)
+}
+
 func extractRequestedCount(text string) int {
 	return extractFirstPositiveCount(text, requestedCountPatterns)
 }
@@ -298,12 +383,16 @@ func readSkillMetadata(path string) (SkillMetadata, error) {
 	}
 	meta.Keywords = compactStrings(meta.Keywords)
 	meta.Tools = compactStrings(meta.Tools)
+	meta.QualityReasons = compactStrings(meta.QualityReasons)
+	meta.QualityWarnings = compactStrings(meta.QualityWarnings)
 	return meta, nil
 }
 
 func writeSkillMetadata(path string, meta SkillMetadata) error {
 	meta.Keywords = compactStrings(meta.Keywords)
 	meta.Tools = compactStrings(meta.Tools)
+	meta.QualityReasons = compactStrings(meta.QualityReasons)
+	meta.QualityWarnings = compactStrings(meta.QualityWarnings)
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
@@ -392,12 +481,12 @@ func readSessionExperience(path string) (sessionExperience, error) {
 	return experience, nil
 }
 
-func upsertAutoSkill(cfg config.Config, experience sessionExperience) error {
+func upsertAutoSkill(cfg config.Config, experience sessionExperience, quality autoSkillQualityReport) error {
 	skillStoreMu.Lock()
 	defer skillStoreMu.Unlock()
 
 	root := filepath.Join(cfg.Workspace, "skills")
-	loaded := Discover(root)
+	loaded := discoverSkills(true, root)
 	target := findBestAutoSkill(loaded, experience)
 	now := time.Now().Format(time.RFC3339)
 	maxExamples := cfg.AutoSkillMaxExamples
@@ -414,14 +503,23 @@ func upsertAutoSkill(cfg config.Config, experience sessionExperience) error {
 			slug = "autoskill-general-workflow"
 		}
 		name = slug
-		skillPath = filepath.Join(root, slug, "SKILL.md")
 		meta = SkillMetadata{Slug: slug, Auto: true, CreatedAt: now}
 	}
+	resolvedTier := resolveAutoSkillTier(target, quality.Tier)
+	oldSkillDir := ""
+	if skillPath != "" {
+		oldSkillDir = filepath.Dir(skillPath)
+	}
+	skillPath = autoSkillPath(root, name, resolvedTier)
 	meta.Auto = true
+	meta.Tier = resolvedTier
 	meta.CaptureCount++
 	meta.UpdatedAt = now
 	meta.Keywords = normalizeAutoKeywords(mergeOrdered(meta.Keywords, experience.Keywords))
 	meta.Tools = mergeOrdered(meta.Tools, experience.ToolNames)
+	meta.QualityScore = quality.Score
+	meta.QualityReasons = mergeOrdered(meta.QualityReasons, quality.Reasons)
+	meta.QualityWarnings = mergeOrdered(meta.QualityWarnings, quality.Warnings)
 	meta.Examples = compactExamples(append([]SkillExample{{
 		Prompt:    memory.LimitText(strings.TrimSpace(experience.Prompt), maxExamplePromptChars),
 		Response:  memory.LimitText(strings.TrimSpace(experience.Response), maxExampleResponseChars),
@@ -433,7 +531,43 @@ func upsertAutoSkill(cfg config.Config, experience sessionExperience) error {
 	if err := writeAtomicFile(skillPath, []byte(renderAutoSkill(name, meta)), 0o644); err != nil {
 		return err
 	}
-	return writeSkillMetadata(sidecarPath(skillPath), meta)
+	if err := writeSkillMetadata(sidecarPath(skillPath), meta); err != nil {
+		return err
+	}
+	if oldSkillDir != "" && filepath.Clean(oldSkillDir) != filepath.Clean(filepath.Dir(skillPath)) {
+		_ = os.RemoveAll(oldSkillDir)
+	}
+	return nil
+}
+
+func resolveAutoSkillTier(existing Skill, qualityTier string) string {
+	if existing.Path != "" && !isCandidateSkillPath(existing.Path) {
+		return autoSkillTierApproved
+	}
+	if existing.Metadata.Tier == autoSkillTierApproved {
+		return autoSkillTierApproved
+	}
+	if qualityTier == autoSkillTierApproved {
+		return autoSkillTierApproved
+	}
+	return autoSkillTierCandidate
+}
+
+func autoSkillPath(root, name, tier string) string {
+	base := root
+	if tier == autoSkillTierCandidate {
+		base = filepath.Join(root, candidateSkillDirName)
+	}
+	return filepath.Join(base, name, "SKILL.md")
+}
+
+func isCandidateSkillPath(path string) bool {
+	for _, part := range strings.Split(filepath.Clean(path), string(os.PathSeparator)) {
+		if part == candidateSkillDirName {
+			return true
+		}
+	}
+	return false
 }
 
 func findBestAutoSkill(loaded []Skill, experience sessionExperience) Skill {
@@ -479,8 +613,10 @@ func renderAutoSkill(name string, meta SkillMetadata) string {
 	lines := []string{
 		"# " + title,
 		"",
-		"Auto-generated from successful MiniClaw runs. This skill is optimized automatically as more matching executions are captured.",
+		"Auto-generated from successful MiniClaw runs. Approved skills are auto-loaded; candidate skills stay in _candidates until a cleaner run promotes them.",
 		"",
+		fmt.Sprintf("Tier: %s", displaySkillTier(meta.Tier)),
+		fmt.Sprintf("Quality score: %d", meta.QualityScore),
 		fmt.Sprintf("Current score: %d/100", meta.Score),
 		"",
 		"## When To Use",
@@ -529,12 +665,27 @@ func renderAutoSkill(name string, meta SkillMetadata) string {
 	}
 	lines = append(lines,
 		"## Metrics",
+		fmt.Sprintf("- tier: %s", displaySkillTier(meta.Tier)),
+		fmt.Sprintf("- quality_score: %d", meta.QualityScore),
 		fmt.Sprintf("- captures: %d", meta.CaptureCount),
 		fmt.Sprintf("- selected: %d", meta.SelectedCount),
 		fmt.Sprintf("- success: %d", meta.SuccessCount),
 		fmt.Sprintf("- failure: %d", meta.FailureCount),
 	)
+	if len(meta.QualityReasons) > 0 {
+		lines = append(lines, "- quality_reasons: "+strings.Join(meta.QualityReasons, ", "))
+	}
+	if len(meta.QualityWarnings) > 0 {
+		lines = append(lines, "- quality_warnings: "+strings.Join(meta.QualityWarnings, ", "))
+	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+}
+
+func displaySkillTier(tier string) string {
+	if strings.TrimSpace(tier) == "" {
+		return autoSkillTierApproved
+	}
+	return tier
 }
 
 func calculateSkillScore(meta SkillMetadata) int {

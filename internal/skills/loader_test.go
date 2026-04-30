@@ -55,6 +55,24 @@ func TestBuildTurnContextIncludesRelevantSkillContent(t *testing.T) {
 	}
 }
 
+func TestDiscoverSkipsCandidateSkills(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "approved", "# Approved\n\nUse approved workflow notes.")
+	writeSkill(t, filepath.Join(root, candidateSkillDirName), "candidate", "# Candidate\n\nUse candidate workflow notes.")
+	if err := writeSkillMetadata(filepath.Join(root, candidateSkillDirName, "candidate", skillMetadataFileName), SkillMetadata{Auto: true, Tier: autoSkillTierCandidate}); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded := Discover(root)
+	if len(loaded) != 1 || loaded[0].Name != "approved" {
+		t.Fatalf("expected only approved skill to be discovered, got %+v", loaded)
+	}
+	all := discoverSkills(true, root)
+	if len(all) != 2 {
+		t.Fatalf("expected internal discovery to include candidates, got %+v", all)
+	}
+}
+
 func TestTokenizeSplitsPunctuationDelimitedTerms(t *testing.T) {
 	tokens := tokenize("执行mmx help,维护关于 mmx 的 skill")
 
@@ -253,6 +271,9 @@ func TestAutoCaptureSessionCreatesAndUpdatesSkill(t *testing.T) {
 	if !loaded[0].Metadata.Auto {
 		t.Fatalf("expected autoskill metadata, got %+v", loaded[0].Metadata)
 	}
+	if loaded[0].Metadata.Tier != autoSkillTierApproved {
+		t.Fatalf("expected approved autoskill, got %+v", loaded[0].Metadata)
+	}
 	if loaded[0].Metadata.CaptureCount != 3 {
 		t.Fatalf("expected 3 captures, got %+v", loaded[0].Metadata)
 	}
@@ -320,6 +341,84 @@ func TestAutoCaptureSessionSkipsFailureHeavyRuns(t *testing.T) {
 	}
 	if loaded := Discover(filepath.Join(workspace, "skills")); len(loaded) != 0 {
 		t.Fatalf("expected failure-heavy run to be skipped, got %+v", loaded)
+	}
+}
+
+func TestAutoCaptureSessionWritesRecoveredRunsAsCandidate(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-recovered-candidate.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "deploy service with retry"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read deployment notes"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Error: first deploy failed", "is_error": true}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "write_file", "content": "updated deployment config"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "completed after retry"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := Discover(filepath.Join(workspace, "skills")); len(loaded) != 0 {
+		t.Fatalf("expected candidate skill to stay out of default discovery, got %+v", loaded)
+	}
+	all := discoverSkills(true, filepath.Join(workspace, "skills"))
+	if len(all) != 1 {
+		t.Fatalf("expected candidate skill to be written, got %+v", all)
+	}
+	if all[0].Metadata.Tier != autoSkillTierCandidate || !strings.Contains(all[0].Path, candidateSkillDirName) {
+		t.Fatalf("expected candidate metadata and path, got %+v at %s", all[0].Metadata, all[0].Path)
+	}
+}
+
+func TestAutoCaptureSessionPromotesCandidateAfterCleanRun(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	candidateSessionPath := filepath.Join(workspace, "sessions", "session-promote-candidate.jsonl")
+	writeSession(t, candidateSessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "deploy service with retry"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read deployment notes"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Error: first deploy failed", "is_error": true}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "write_file", "content": "updated deployment config"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "completed after retry"}),
+	})
+	if err := AutoCaptureSession(cfg, candidateSessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	candidates := discoverSkills(true, filepath.Join(workspace, "skills"))
+	if len(candidates) != 1 {
+		t.Fatalf("expected candidate skill, got %+v", candidates)
+	}
+	candidateDir := filepath.Dir(candidates[0].Path)
+
+	approvedSessionPath := filepath.Join(workspace, "sessions", "session-promote-approved.jsonl")
+	writeSession(t, approvedSessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "deploy service with retry"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read deployment notes"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "write_file", "content": "updated deployment config"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "completed deploy service validation passed"}),
+	})
+	if err := AutoCaptureSession(cfg, approvedSessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected promoted approved skill, got %+v", loaded)
+	}
+	if loaded[0].Metadata.Tier != autoSkillTierApproved || strings.Contains(loaded[0].Path, candidateSkillDirName) {
+		t.Fatalf("expected approved promoted metadata and path, got %+v at %s", loaded[0].Metadata, loaded[0].Path)
+	}
+	if _, err := os.Stat(candidateDir); !os.IsNotExist(err) {
+		t.Fatalf("expected old candidate directory to be removed, stat err=%v", err)
 	}
 }
 
