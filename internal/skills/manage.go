@@ -58,10 +58,7 @@ func CreateSkill(cfg config.Config, rawName, content string, overwrite bool) (Sk
 	meta.Keywords = mergeOrdered(meta.Keywords, tokenize(name+" "+firstParagraph(document)+" "+document))
 	meta.Tools = mergeOrdered(meta.Tools, detectMentionedTools(document))
 	meta.Score = calculateSkillScore(meta)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return Skill{}, err
-	}
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+	if err := writeAtomicFile(path, []byte(document), 0o644); err != nil {
 		return Skill{}, err
 	}
 	if err := writeSkillMetadata(sidecarPath(path), meta); err != nil {
@@ -86,7 +83,7 @@ func OptimizeSkill(cfg config.Config, rawName string) (Skill, error) {
 	meta.Tools = mergeOrdered(meta.Tools, detectMentionedTools(skill.Content))
 	meta.Score = calculateSkillScore(meta)
 	if meta.Auto {
-		if err := os.WriteFile(skill.Path, []byte(renderAutoSkill(skill.Name, meta)), 0o644); err != nil {
+		if err := writeAtomicFile(skill.Path, []byte(renderAutoSkill(skill.Name, meta)), 0o644); err != nil {
 			return Skill{}, err
 		}
 	}

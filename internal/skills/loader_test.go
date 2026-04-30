@@ -187,6 +187,29 @@ func TestUpdateSelectedSkillScoresCreatesMetadataForManualSkill(t *testing.T) {
 	}
 }
 
+func TestUpdateSelectedSkillScoresReloadsLatestMetadata(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "testing", "# Testing\n\nUse Go unit tests and table-driven coverage for handler changes.")
+	loaded := Discover(root)
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(loaded))
+	}
+	if err := writeSkillMetadata(filepath.Join(root, "testing", skillMetadataFileName), SkillMetadata{SelectedCount: 7, SuccessCount: 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.EnableSkillScoring = true
+	if err := UpdateSelectedSkillScores(cfg, loaded, true); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := Discover(root)
+	if reloaded[0].Metadata.SelectedCount != 8 || reloaded[0].Metadata.SuccessCount != 8 {
+		t.Fatalf("expected latest metadata to be incremented, got %+v", reloaded[0].Metadata)
+	}
+}
+
 func TestAutoCaptureSessionCreatesAndUpdatesSkill(t *testing.T) {
 	workspace := t.TempDir()
 	cfg := config.Default()
@@ -272,6 +295,31 @@ func TestAutoCaptureSessionDoesNotRenderRawPromptResponse(t *testing.T) {
 	}
 	if !strings.Contains(loaded[0].Content, "## Recent Captures") {
 		t.Fatalf("expected sanitized capture section, got %s", loaded[0].Content)
+	}
+}
+
+func TestAutoCaptureSessionSkipsFailureHeavyRuns(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-failure-heavy.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "deploy service with retries"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "done"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Error: command failed", "is_error": true}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "write_file", "content": "done"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "Error: validation failed", "is_error": true}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "finished after retries"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := Discover(filepath.Join(workspace, "skills")); len(loaded) != 0 {
+		t.Fatalf("expected failure-heavy run to be skipped, got %+v", loaded)
 	}
 }
 

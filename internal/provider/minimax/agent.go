@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"miniclaw2/internal/config"
@@ -73,7 +74,7 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 			Messages:    messages,
 		})
 		if err != nil {
-			_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, false)
+			recordSelectedSkillScore(cfg, promptContext.Skills, false)
 			return "", err
 		}
 		assistantText := strings.TrimSpace(ExtractTextBlocks(response.Content))
@@ -83,11 +84,11 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 		messages = append(messages, requestMessage{Role: "assistant", Content: responseToRequestBlocks(response.Content)})
 		if len(toolUses) == 0 {
 			if err := recorder.AppendMessage("message", "assistant", assistantText); err != nil {
-				_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, false)
+				recordSelectedSkillScore(cfg, promptContext.Skills, false)
 				return "", err
 			}
-			_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, true)
-			_ = skills.AutoCaptureSession(cfg, recorder.FilePath, prompt, assistantText)
+			recordSelectedSkillScore(cfg, promptContext.Skills, true)
+			recordAutoSkillCapture(cfg, recorder.FilePath, prompt, assistantText)
 			return assistantText, nil
 		}
 		for _, toolUse := range toolUses {
@@ -103,8 +104,20 @@ func RunAgentWithRecorder(ctx context.Context, cfg config.Config, prompt string,
 			messages = append(messages, buildToolResultMessage(toolUse, toolResult, false))
 		}
 	}
-	_ = skills.UpdateSelectedSkillScores(cfg, promptContext.Skills, false)
+	recordSelectedSkillScore(cfg, promptContext.Skills, false)
 	return "", fmt.Errorf("%s", buildToolIterationLimitError(cfg.MaxToolIterations, lastAssistantText, lastToolUses))
+}
+
+func recordSelectedSkillScore(cfg config.Config, selected []skills.Skill, success bool) {
+	if err := skills.UpdateSelectedSkillScores(cfg, selected, success); err != nil {
+		fmt.Fprintf(os.Stderr, "miniclaw: update selected skill scores: %v\n", err)
+	}
+}
+
+func recordAutoSkillCapture(cfg config.Config, sessionPath, prompt, response string) {
+	if err := skills.AutoCaptureSession(cfg, sessionPath, prompt, response); err != nil {
+		fmt.Fprintf(os.Stderr, "miniclaw: auto skill capture: %v\n", err)
+	}
 }
 
 func buildEffectiveToolSchema(manager *mcp.Manager) []toolSchema {

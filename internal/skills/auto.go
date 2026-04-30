@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"miniclaw2/internal/config"
@@ -61,12 +63,19 @@ type sessionExperience struct {
 	Keywords            []string
 }
 
+var skillStoreMu sync.Mutex
+
 func UpdateSelectedSkillScores(cfg config.Config, selected []Skill, success bool) error {
 	if !cfg.EnableSkillScoring || len(selected) == 0 {
 		return nil
 	}
+	skillStoreMu.Lock()
+	defer skillStoreMu.Unlock()
 	for _, skill := range selected {
 		meta := skill.Metadata
+		if latest, err := readSkillMetadata(sidecarPath(skill.Path)); err == nil {
+			meta = latest
+		}
 		meta.SelectedCount++
 		if success {
 			meta.SuccessCount++
@@ -108,7 +117,14 @@ func AutoCaptureSession(cfg config.Config, sessionPath, prompt, response string)
 	if experience.SuccessfulToolCount < cfg.AutoSkillMinToolCalls {
 		return nil
 	}
+	if hasTooManyFailedTools(experience) {
+		return nil
+	}
 	return upsertAutoSkill(cfg, experience)
+}
+
+func hasTooManyFailedTools(experience sessionExperience) bool {
+	return experience.FailedToolCount > 0 && experience.FailedToolCount > experience.SuccessfulToolCount/2
 }
 
 func readSkillMetadata(path string) (SkillMetadata, error) {
@@ -135,7 +151,40 @@ func writeSkillMetadata(path string, meta SkillMetadata) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return writeAtomicFile(path, append(data, '\n'), 0o644)
+}
+
+func writeAtomicFile(path string, data []byte, mode fs.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp.")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 func readSessionExperience(path string) (sessionExperience, error) {
@@ -183,6 +232,9 @@ func readSessionExperience(path string) (sessionExperience, error) {
 }
 
 func upsertAutoSkill(cfg config.Config, experience sessionExperience) error {
+	skillStoreMu.Lock()
+	defer skillStoreMu.Unlock()
+
 	root := filepath.Join(cfg.Workspace, "skills")
 	loaded := Discover(root)
 	target := findBestAutoSkill(loaded, experience)
@@ -217,10 +269,7 @@ func upsertAutoSkill(cfg config.Config, experience sessionExperience) error {
 	}}, meta.Examples...), maxExamples)
 	meta.Score = calculateSkillScore(meta)
 
-	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(skillPath, []byte(renderAutoSkill(name, meta)), 0o644); err != nil {
+	if err := writeAtomicFile(skillPath, []byte(renderAutoSkill(name, meta)), 0o644); err != nil {
 		return err
 	}
 	return writeSkillMetadata(sidecarPath(skillPath), meta)
