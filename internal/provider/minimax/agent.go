@@ -152,15 +152,15 @@ func responseToRequestBlocks(blocks []responseContentBlock) []requestContentBloc
 }
 
 func executeEffectiveTool(ctx context.Context, toolUse ToolUse, cfg config.Config, manager *mcp.Manager) (string, error) {
-	localInput := stringifyToolInput(toolUse.Input)
-	result, err := tools.ExecuteWithContext(ctx, tools.ToolUse{ID: toolUse.ID, Name: toolUse.Name, Input: localInput}, cfg)
-	if err == nil {
-		return result, nil
+	if tools.IsLocalTool(toolUse.Name) {
+		localInput := stringifyToolInput(toolUse.Input)
+		return tools.ExecuteWithContext(ctx, tools.ToolUse{ID: toolUse.ID, Name: toolUse.Name, Input: localInput}, cfg)
 	}
 	if cfg.EnableMCP && manager.HasTool(toolUse.Name) {
 		return manager.CallTool(ctx, toolUse.Name, toolUse.Input)
 	}
-	return "", err
+	localInput := stringifyToolInput(toolUse.Input)
+	return tools.ExecuteWithContext(ctx, tools.ToolUse{ID: toolUse.ID, Name: toolUse.Name, Input: localInput}, cfg)
 }
 
 func stringifyToolInput(input map[string]any) map[string]string {

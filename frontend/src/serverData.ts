@@ -64,6 +64,8 @@ interface TaskStateInfo {
 
 const defaultTaskTimeoutSeconds = 10 * 60;
 const skillSlugPattern = /^[a-zA-Z0-9._-]+$/;
+const workspaceIdPattern = /^[a-zA-Z0-9._-]+$/;
+const internalSkillDirs = new Set(["_candidates", "_archived"]);
 
 function defaultConfig(): RuntimeConfig {
   const userHome = homedir();
@@ -297,14 +299,36 @@ function skillsDir(workspaceDir: string) {
 }
 
 function normalizeSkillSlug(rawSlug: string, emptyMessage = "Skill slug 不能为空。") {
-  const slug = rawSlug.trim();
-  if (!slug) {
+  return normalizeWorkspaceId(rawSlug, emptyMessage, "Skill slug", skillSlugPattern);
+}
+
+function normalizeTaskId(rawId: string, emptyMessage = "任务 ID 不能为空。") {
+  return normalizeWorkspaceId(rawId, emptyMessage, "任务 ID", workspaceIdPattern);
+}
+
+function normalizeRunId(rawId: string, emptyMessage = "执行记录 ID 不能为空。") {
+  return normalizeWorkspaceId(rawId, emptyMessage, "执行记录 ID", workspaceIdPattern);
+}
+
+function normalizeWorkspaceId(rawId: string, emptyMessage: string, label: string, pattern: RegExp) {
+  const id = rawId.trim();
+  if (!id) {
     throw new Error(emptyMessage);
   }
-  if (!skillSlugPattern.test(slug) || slug === "." || slug === "..") {
-    throw new Error("Skill slug 只能包含字母、数字、点、下划线和中划线，且不能是 . 或 ..。");
+  if (!pattern.test(id) || id === "." || id === "..") {
+    throw new Error(`${label} 只能包含字母、数字、点、下划线和中划线，且不能是 . 或 ..。`);
   }
-  return slug;
+  return id;
+}
+
+function resolveChildFile(rootDirectory: string, id: string, extension: string) {
+  const root = resolve(rootDirectory);
+  const target = resolve(root, `${id}${extension}`);
+  const relativePath = relative(root, target);
+  if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new Error("文件路径必须位于目标目录内。");
+  }
+  return target;
 }
 
 function resolveSkillDir(workspaceDir: string, slug: string) {
@@ -326,7 +350,7 @@ function normalizeDate(value?: string) {
 }
 
 function taskStatePath(workspaceDir: string, taskId: string) {
-  return join(stateDir(workspaceDir), `${taskId}.json`);
+  return resolveChildFile(stateDir(workspaceDir), normalizeTaskId(taskId), ".json");
 }
 
 function readTaskState(workspaceDir: string, taskId: string) {
@@ -380,13 +404,8 @@ export function listTasks(): TaskRecord[] {
 }
 
 function validateTaskPayload(payload: TaskWritePayload, existingId?: string) {
-  const id = payload.id.trim();
-  if (!id) {
-    throw new Error("任务 ID 不能为空。");
-  }
-  if (!/^[a-zA-Z0-9._-]+$/.test(id)) {
-    throw new Error("任务 ID 只能包含字母、数字、点、下划线和中划线。");
-  }
+  const id = normalizeTaskId(payload.id);
+  const previousId = existingId === undefined ? "" : normalizeTaskId(existingId, "缺少任务 ID。");
   if (!payload.schedule.trim()) {
     throw new Error("Cron 表达式不能为空。");
   }
@@ -399,17 +418,18 @@ function validateTaskPayload(payload: TaskWritePayload, existingId?: string) {
   if (payload.maxToolIterations !== undefined && payload.maxToolIterations < 0) {
     throw new Error("最大工具迭代次数不能小于 0。");
   }
-  if (existingId && existingId !== id && existsSync(join(cronDir(loadRuntimeConfig().workspaceDir), `${id}.json`))) {
+  if (previousId && previousId !== id && existsSync(resolveChildFile(cronDir(loadRuntimeConfig().workspaceDir), id, ".json"))) {
     throw new Error("同名任务已存在。");
   }
+  return { id, previousId };
 }
 
 export function saveTask(payload: TaskWritePayload, existingId?: string) {
-  validateTaskPayload(payload, existingId);
+  const { id, previousId } = validateTaskPayload(payload, existingId);
   const { workspaceDir } = loadRuntimeConfig();
   mkdirSync(cronDir(workspaceDir), { recursive: true });
   const nextPayload: TaskFilePayload = {
-    id: payload.id.trim(),
+    id,
     description: payload.description?.trim() || undefined,
     schedule: payload.schedule.trim(),
     prompt: payload.prompt.trim(),
@@ -422,30 +442,27 @@ export function saveTask(payload: TaskWritePayload, existingId?: string) {
     nextPayload.enable_mcp = payload.enableMcp;
   }
 
-  const targetFilePath = join(cronDir(workspaceDir), `${payload.id.trim()}.json`);
+  const targetFilePath = resolveChildFile(cronDir(workspaceDir), id, ".json");
   writeFileSync(targetFilePath, `${JSON.stringify(nextPayload, null, 2)}\n`, "utf8");
 
-  if (existingId && existingId !== payload.id.trim()) {
-    const previousFilePath = join(cronDir(workspaceDir), `${existingId}.json`);
+  if (previousId && previousId !== id) {
+    const previousFilePath = resolveChildFile(cronDir(workspaceDir), previousId, ".json");
     if (existsSync(previousFilePath)) {
       unlinkSync(previousFilePath);
     }
-    const previousStatePath = taskStatePath(workspaceDir, existingId);
+    const previousStatePath = taskStatePath(workspaceDir, previousId);
     if (existsSync(previousStatePath)) {
       unlinkSync(previousStatePath);
     }
   }
 
-  return listTasks().find(task => task.id === payload.id.trim()) ?? normalizeTaskRecord(targetFilePath, readTaskState(workspaceDir, payload.id.trim()));
+  return listTasks().find(task => task.id === id) ?? normalizeTaskRecord(targetFilePath, readTaskState(workspaceDir, id));
 }
 
 export function deleteTask(taskId: string) {
-  const resolvedId = taskId.trim();
-  if (!resolvedId) {
-    throw new Error("缺少任务 ID。");
-  }
+  const resolvedId = normalizeTaskId(taskId, "缺少任务 ID。");
   const { workspaceDir } = loadRuntimeConfig();
-  const taskFilePath = join(cronDir(workspaceDir), `${resolvedId}.json`);
+  const taskFilePath = resolveChildFile(cronDir(workspaceDir), resolvedId, ".json");
   if (existsSync(taskFilePath)) {
     unlinkSync(taskFilePath);
   }
@@ -559,7 +576,8 @@ export function listRuns() {
 
 export function getRunDetail(runId: string): RunDetail {
   const { workspaceDir } = loadRuntimeConfig();
-  const sessionFile = join(sessionsDir(workspaceDir), `${runId}.jsonl`);
+  const resolvedRunId = normalizeRunId(runId, "缺少执行记录 ID。");
+  const sessionFile = resolveChildFile(sessionsDir(workspaceDir), resolvedRunId, ".jsonl");
   if (!existsSync(sessionFile)) {
     throw new Error("执行记录不存在。");
   }
@@ -578,6 +596,9 @@ function walkSkillFiles(directory: string, acc: string[] = []) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const entryPath = join(directory, entry.name);
     if (entry.isDirectory()) {
+      if (internalSkillDirs.has(entry.name)) {
+        continue;
+      }
       walkSkillFiles(entryPath, acc);
       continue;
     }

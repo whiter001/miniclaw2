@@ -129,6 +129,16 @@ func TestSelectRequiresQueryMatchBeforeScoreBonus(t *testing.T) {
 	}
 }
 
+func TestSelectDoesNotSubstringMatchShortASCIITokens(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "noise", "# Noise\n\nCapture current checks before changing files.")
+
+	selected := Select("c", 2, Discover(root))
+	if len(selected) != 0 {
+		t.Fatalf("expected short ASCII token not to match capture/current/check substrings, got %+v", selected)
+	}
+}
+
 func TestBuildContextStripsLegacyAutoSkillRawExamples(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "autoskill-dangerous", strings.Join([]string{

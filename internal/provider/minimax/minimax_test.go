@@ -1,12 +1,15 @@
 package minimax
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"miniclaw2/internal/config"
+	"miniclaw2/internal/mcp"
 )
 
 func TestResolveAnthropicMessagesURLNormalizesBaseEndpoint(t *testing.T) {
@@ -85,9 +88,9 @@ func TestBuildSystemPromptForQuerySkipsUnrelatedSkills(t *testing.T) {
 
 func TestRequestContentBlockMarshalToolUseIncludesEmptyInputObject(t *testing.T) {
 	data, err := json.Marshal(requestContentBlock{
-		Type:  "tool_use",
-		ID:    "call_function_1",
-		Name:  "mmx_quota",
+		Type: "tool_use",
+		ID:   "call_function_1",
+		Name: "mmx_quota",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +129,30 @@ func TestRequestContentBlockMarshalTextOmitsInput(t *testing.T) {
 	}
 	if !contains(string(data), `"text":"hello"`) {
 		t.Fatalf("expected text payload in %s", string(data))
+	}
+}
+
+func TestExecuteEffectiveToolDoesNotFallbackForLocalToolErrors(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "mcp.json")
+	if err := os.WriteFile(configPath, []byte(`{"tools":{"exec":{"type":"command","command":"go","args":["version"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Workspace: t.TempDir(), EnableMCP: true, MCPConfigPath: configPath, RequestTimeout: 5}
+	manager := mcp.NewManager(cfg)
+	defer manager.StopAll()
+	if !manager.HasTool("exec") {
+		t.Fatalf("expected MCP command tool to be registered")
+	}
+
+	result, err := executeEffectiveTool(context.Background(), ToolUse{Name: "exec", Input: map[string]any{"command": "rm -rf ."}}, cfg, manager)
+	if err == nil {
+		t.Fatalf("expected local exec guard error, got result %q", result)
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("expected blocked command error, got %v", err)
+	}
+	if strings.Contains(result, "go version") {
+		t.Fatalf("expected no fallback result from MCP command tool, got %q", result)
 	}
 }
 

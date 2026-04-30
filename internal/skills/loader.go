@@ -357,13 +357,35 @@ func scoreTextField(text string, tokens []string, weight int) int {
 		return 0
 	}
 	lower := strings.ToLower(text)
+	fieldTokens := tokenSet(tokenize(text))
 	score := 0
 	for _, token := range tokens {
-		if strings.Contains(lower, token) {
+		if _, ok := fieldTokens[token]; ok {
+			score += weight
+			continue
+		}
+		if allowsSubstringMatch(token) && strings.Contains(lower, token) {
 			score += weight
 		}
 	}
 	return score
+}
+
+func tokenSet(tokens []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		set[token] = struct{}{}
+	}
+	return set
+}
+
+func allowsSubstringMatch(token string) bool {
+	for _, char := range token {
+		if char > 127 {
+			return true
+		}
+	}
+	return false
 }
 
 func metadataGuidanceText(meta SkillMetadata) string {

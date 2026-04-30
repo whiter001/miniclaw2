@@ -235,13 +235,25 @@ func (m *Manager) downloadImageAsDataURL(ctx context.Context, imageURL string) (
 }
 
 func (m *Manager) readLocalImageAsDataURL(imagePath string) (string, error) {
-	resolved := imagePath
-	if !filepath.IsAbs(imagePath) {
-		var err error
-		resolved, err = tools.ResolveWorkspacePath(m.cfg.Workspace, imagePath)
+	workspace, err := filepath.Abs(m.cfg.Workspace)
+	if err != nil {
+		return "", err
+	}
+	pathForResolve := imagePath
+	if filepath.IsAbs(imagePath) {
+		absoluteImagePath, err := filepath.Abs(imagePath)
 		if err != nil {
 			return "", err
 		}
+		relativePath, err := filepath.Rel(workspace, absoluteImagePath)
+		if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(os.PathSeparator)) || filepath.IsAbs(relativePath) {
+			return "", fmt.Errorf("local image path must be inside workspace: %s", imagePath)
+		}
+		pathForResolve = relativePath
+	}
+	resolved, err := tools.ResolveWorkspacePath(m.cfg.Workspace, pathForResolve)
+	if err != nil {
+		return "", err
 	}
 	if _, err := os.Stat(resolved); err != nil {
 		if os.IsNotExist(err) {

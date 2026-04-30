@@ -167,3 +167,31 @@ func TestProcessImageSourceSupportsDataURLsAndRemoteURLs(t *testing.T) {
 		t.Fatalf("unexpected remote conversion result: %s", remote)
 	}
 }
+
+func TestProcessImageSourceRejectsAbsolutePathOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	insidePath := filepath.Join(workspace, "inside.png")
+	outsidePath := filepath.Join(root, "outside.png")
+	for _, path := range []string{insidePath, outsidePath} {
+		if err := os.WriteFile(path, []byte{0x89, 0x50, 0x4E, 0x47}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager := NewManager(config.Config{EnableMCP: true, Workspace: workspace, RequestTimeout: 5})
+
+	inside, err := manager.processImageSource(context.Background(), insidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(inside, "data:image/png;base64,") {
+		t.Fatalf("unexpected inside image result: %s", inside)
+	}
+	_, err = manager.processImageSource(context.Background(), outsidePath)
+	if err == nil || !strings.Contains(err.Error(), "inside workspace") {
+		t.Fatalf("expected outside workspace error, got %v", err)
+	}
+}

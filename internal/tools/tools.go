@@ -79,6 +79,15 @@ func Definitions() []ToolDefinition {
 	}
 }
 
+func IsLocalTool(name string) bool {
+	switch name {
+	case "list_dir", "read_file", "write_file", "exec", "grep_search":
+		return true
+	default:
+		return false
+	}
+}
+
 func Execute(tool ToolUse, cfg config.Config) (string, error) {
 	return ExecuteWithContext(context.Background(), tool, cfg)
 }
