@@ -61,10 +61,12 @@ autoskill 会自动记录：
 - 质量原因与警告
 - 关键词
 - 推荐工具
-- 最近成功示例
+- 最近成功示例的脱敏摘要
 - 被选中次数
 - 成功 / 失败次数
 - 当前分数
+
+为避免把一次性上下文长期留在元数据中，`skill.json` 不保存原始 prompt / response；示例会先替换绝对路径、时间戳、运行 ID 等环境特定值，再写入 `request_summary` / `outcome_summary`。
 
 autoskill 文档会随着后续成功执行持续优化。
 

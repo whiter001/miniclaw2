@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -316,6 +317,133 @@ func TestAutoCaptureSessionDoesNotRenderRawPromptResponse(t *testing.T) {
 	}
 	if !strings.Contains(loaded[0].Content, "## Recent Captures") {
 		t.Fatalf("expected sanitized capture section, got %s", loaded[0].Content)
+	}
+}
+
+func TestAutoCaptureSessionStoresSanitizedExampleSummaries(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	runID := "123e4567-e89b-12d3-a456-426614174000"
+	sessionPath := filepath.Join(workspace, "sessions", "session-sanitized-summary.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "repair /Users/byf/tmp/repair.go for run " + runID}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read /Users/byf/tmp/repair.go"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "go test passed at 2026-04-24T17:42:49Z for run " + runID}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "Finished repairing /Users/byf/tmp/repair.go at 2026-04-24T17:42:49Z for run " + runID}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 autoskill, got %d", len(loaded))
+	}
+	if len(loaded[0].Metadata.Examples) != 1 {
+		t.Fatalf("expected 1 sanitized example, got %+v", loaded[0].Metadata.Examples)
+	}
+	example := loaded[0].Metadata.Examples[0]
+	if example.Prompt != "" || example.Response != "" {
+		t.Fatalf("expected legacy raw fields to be empty, got %+v", example)
+	}
+	combinedSummary := example.RequestSummary + "\n" + example.OutcomeSummary
+	for _, raw := range []string{"/Users/byf/tmp/repair.go", "2026-04-24T17:42:49Z", runID} {
+		if strings.Contains(combinedSummary, raw) {
+			t.Fatalf("expected raw value %q to be sanitized, got %s", raw, combinedSummary)
+		}
+	}
+	if !strings.Contains(combinedSummary, "<path>") || !strings.Contains(combinedSummary, "<timestamp>") || !strings.Contains(combinedSummary, "<id>") {
+		t.Fatalf("expected sanitized placeholders, got %s", combinedSummary)
+	}
+	metadataContent, err := os.ReadFile(filepath.Join(filepath.Dir(loaded[0].Path), skillMetadataFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataText := string(metadataContent)
+	if strings.Contains(metadataText, `"prompt"`) || strings.Contains(metadataText, `"response"`) {
+		t.Fatalf("expected metadata JSON to omit raw prompt/response fields, got %s", metadataText)
+	}
+}
+
+func TestAutoCaptureSessionMigratesLegacyRawExamples(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	firstSessionPath := filepath.Join(workspace, "sessions", "session-legacy-before.jsonl")
+	writeSession(t, firstSessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "fix build failure"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read file"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "go test passed"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "Fixed build failure with tests passing"}),
+	})
+	if err := AutoCaptureSession(cfg, firstSessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 autoskill, got %d", len(loaded))
+	}
+	metadataPath := filepath.Join(filepath.Dir(loaded[0].Path), skillMetadataFileName)
+	legacyMeta := loaded[0].Metadata
+	legacyRunID := "123e4567-e89b-12d3-a456-426614174001"
+	legacyMeta.Examples = []SkillExample{{
+		Prompt:    "legacy request used /Users/byf/secret/input.txt for run " + legacyRunID,
+		Response:  "legacy response finished at 2026-04-24T18:00:00Z",
+		ToolNames: []string{"exec"},
+		CreatedAt: "2026-04-24T18:00:00Z",
+	}}
+	legacyData, err := json.MarshalIndent(legacyMeta, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, append(legacyData, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	secondSessionPath := filepath.Join(workspace, "sessions", "session-legacy-after.jsonl")
+	writeSession(t, secondSessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "fix build failure again"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read file"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "go test passed"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "Fixed build failure again with tests passing"}),
+	})
+	if err := AutoCaptureSession(cfg, secondSessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded = Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 autoskill, got %d", len(loaded))
+	}
+	if len(loaded[0].Metadata.Examples) == 0 {
+		t.Fatalf("expected migrated examples, got none")
+	}
+	combinedSummary := ""
+	for _, example := range loaded[0].Metadata.Examples {
+		if example.Prompt != "" || example.Response != "" {
+			t.Fatalf("expected raw legacy fields to be empty after migration, got %+v", example)
+		}
+		combinedSummary += example.RequestSummary + "\n" + example.OutcomeSummary + "\n"
+	}
+	for _, raw := range []string{"/Users/byf/secret/input.txt", "2026-04-24T18:00:00Z", legacyRunID} {
+		if strings.Contains(combinedSummary, raw) {
+			t.Fatalf("expected raw legacy value %q to be sanitized, got %s", raw, combinedSummary)
+		}
+	}
+	metadataContent, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataText := string(metadataContent)
+	if strings.Contains(metadataText, `"prompt"`) || strings.Contains(metadataText, `"response"`) {
+		t.Fatalf("expected metadata JSON to omit migrated raw fields, got %s", metadataText)
 	}
 }
 

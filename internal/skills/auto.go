@@ -52,10 +52,12 @@ type SkillMetadata struct {
 }
 
 type SkillExample struct {
-	Prompt    string   `json:"prompt,omitempty"`
-	Response  string   `json:"response,omitempty"`
-	ToolNames []string `json:"tool_names,omitempty"`
-	CreatedAt string   `json:"created_at,omitempty"`
+	RequestSummary string   `json:"request_summary,omitempty"`
+	OutcomeSummary string   `json:"outcome_summary,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	Response       string   `json:"response,omitempty"`
+	ToolNames      []string `json:"tool_names,omitempty"`
+	CreatedAt      string   `json:"created_at,omitempty"`
 }
 
 type sessionLine struct {
@@ -91,6 +93,11 @@ type autoSkillQualityReport struct {
 }
 
 var (
+	windowsPathPattern = regexp.MustCompile(`[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n\s]*`)
+	unixPathPattern    = regexp.MustCompile(`(^|[\s\(\[\{"'=])/(?:[^/\s]+/)*[^/\s]+`)
+	timestampPattern   = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b`)
+	idPattern          = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b`)
+
 	requestedCountPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\b(?:top|first|latest)\s+(\d+)\s*(?:items?|results?|messages?|tweets?|posts?|records?|entries?|questions?|answers?|replies?)\b`),
 		regexp.MustCompile(`(?i)\b(\d+)\s*(?:items?|results?|messages?|tweets?|posts?|records?|entries?|questions?|answers?|replies?)\b`),
@@ -385,6 +392,7 @@ func readSkillMetadata(path string) (SkillMetadata, error) {
 	meta.Tools = compactStrings(meta.Tools)
 	meta.QualityReasons = compactStrings(meta.QualityReasons)
 	meta.QualityWarnings = compactStrings(meta.QualityWarnings)
+	meta.Examples = sanitizeStoredExamples(meta.Examples)
 	return meta, nil
 }
 
@@ -393,6 +401,7 @@ func writeSkillMetadata(path string, meta SkillMetadata) error {
 	meta.Tools = compactStrings(meta.Tools)
 	meta.QualityReasons = compactStrings(meta.QualityReasons)
 	meta.QualityWarnings = compactStrings(meta.QualityWarnings)
+	meta.Examples = sanitizeStoredExamples(meta.Examples)
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
@@ -521,10 +530,10 @@ func upsertAutoSkill(cfg config.Config, experience sessionExperience, quality au
 	meta.QualityReasons = mergeOrdered(meta.QualityReasons, quality.Reasons)
 	meta.QualityWarnings = mergeOrdered(meta.QualityWarnings, quality.Warnings)
 	meta.Examples = compactExamples(append([]SkillExample{{
-		Prompt:    memory.LimitText(strings.TrimSpace(experience.Prompt), maxExamplePromptChars),
-		Response:  memory.LimitText(strings.TrimSpace(experience.Response), maxExampleResponseChars),
-		ToolNames: append([]string(nil), experience.ToolNames...),
-		CreatedAt: now,
+		RequestSummary: sanitizeExampleText(experience.Prompt, maxExamplePromptChars),
+		OutcomeSummary: sanitizeExampleText(experience.Response, maxExampleResponseChars),
+		ToolNames:      append([]string(nil), experience.ToolNames...),
+		CreatedAt:      now,
 	}}, meta.Examples...), maxExamples)
 	meta.Score = calculateSkillScore(meta)
 
@@ -715,11 +724,33 @@ func compactExamples(examples []SkillExample, maxExamples int) []SkillExample {
 	if maxExamples <= 0 {
 		maxExamples = defaultAutoSkillExamples
 	}
+	return normalizeExamples(examples, maxExamples)
+}
+
+func sanitizeStoredExamples(examples []SkillExample) []SkillExample {
+	return normalizeExamples(examples, 0)
+}
+
+func normalizeExamples(examples []SkillExample, maxExamples int) []SkillExample {
 	trimmed := make([]SkillExample, 0, len(examples))
 	seen := map[string]struct{}{}
 	for _, example := range examples {
-		key := strings.TrimSpace(example.Prompt) + "\n" + strings.TrimSpace(example.Response)
-		if key == "" {
+		example.RequestSummary = strings.TrimSpace(example.RequestSummary)
+		if example.RequestSummary == "" {
+			example.RequestSummary = sanitizeExampleText(example.Prompt, maxExamplePromptChars)
+		} else {
+			example.RequestSummary = sanitizeExampleText(example.RequestSummary, maxExamplePromptChars)
+		}
+		example.OutcomeSummary = strings.TrimSpace(example.OutcomeSummary)
+		if example.OutcomeSummary == "" {
+			example.OutcomeSummary = sanitizeExampleText(example.Response, maxExampleResponseChars)
+		} else {
+			example.OutcomeSummary = sanitizeExampleText(example.OutcomeSummary, maxExampleResponseChars)
+		}
+		example.Prompt = ""
+		example.Response = ""
+		key := example.RequestSummary + "\n" + example.OutcomeSummary
+		if strings.TrimSpace(key) == "" {
 			continue
 		}
 		if _, ok := seen[key]; ok {
@@ -728,11 +759,24 @@ func compactExamples(examples []SkillExample, maxExamples int) []SkillExample {
 		seen[key] = struct{}{}
 		example.ToolNames = compactStrings(example.ToolNames)
 		trimmed = append(trimmed, example)
-		if len(trimmed) == maxExamples {
+		if maxExamples > 0 && len(trimmed) == maxExamples {
 			break
 		}
 	}
 	return trimmed
+}
+
+func sanitizeExampleText(text string, maxChars int) string {
+	cleaned := strings.TrimSpace(text)
+	if cleaned == "" {
+		return ""
+	}
+	cleaned = windowsPathPattern.ReplaceAllString(cleaned, "<path>")
+	cleaned = unixPathPattern.ReplaceAllString(cleaned, "${1}<path>")
+	cleaned = timestampPattern.ReplaceAllString(cleaned, "<timestamp>")
+	cleaned = idPattern.ReplaceAllString(cleaned, "<id>")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return memory.LimitText(cleaned, maxChars)
 }
 
 func normalizeAutoKeywords(values []string) []string {
