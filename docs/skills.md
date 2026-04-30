@@ -36,9 +36,10 @@ workspace/
 
 当前选择逻辑：
 
-- 根据用户当前 query 做关键词匹配
+- 根据用户当前 query 做字段加权匹配，优先考虑 skill 名称、描述、关键词、推荐工具和 autoskill 的结构化指导字段
 - 结合 skill 历史分数和成功率做排序
 - 只把前几个相关 skill 注入本轮 system prompt，而不是全量加载
+- autoskill 注入时优先保留 `When To Use`、`Decision Hints`、`Procedure`、`Watchouts`、`Final Outcome` 等核心 section，跳过最近捕获历史和指标明细
 
 相关配置：
 
@@ -59,6 +60,7 @@ autoskill 会自动记录：
 
 - tier 和质量分
 - 质量原因与警告
+- 决策提示、执行步骤、注意事项和最终结果摘要
 - 关键词
 - 推荐工具
 - 最近成功示例的脱敏摘要
@@ -68,7 +70,7 @@ autoskill 会自动记录：
 
 为避免把一次性上下文长期留在元数据中，`skill.json` 不保存原始 prompt / response；示例会先替换绝对路径、时间戳、运行 ID 等环境特定值，再写入 `request_summary` / `outcome_summary`。
 
-autoskill 文档会随着后续成功执行持续优化。
+autoskill 文档会随着后续成功执行持续优化。生成内容会分成 `Decision Hints`、`Procedure`、`Watchouts`、`Final Outcome` 等 section，帮助下一轮判断什么时候该用、怎么执行、需要验证什么，以及哪些历史环境细节不能复用。
 
 相关配置：
 

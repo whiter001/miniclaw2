@@ -118,29 +118,49 @@ func Select(query string, maxSkills int, loaded []Skill) []Skill {
 
 func BuildTurnContext(query string, maxSkills int, directories ...string) string {
 	selected := Select(query, maxSkills, Discover(directories...))
-	return BuildContext(selected)
+	return BuildContextForQuery(query, selected)
 }
 
 func BuildContext(selected []Skill) string {
+	return buildContext("", selected)
+}
+
+func BuildContextForQuery(query string, selected []Skill) string {
+	return buildContext(query, selected)
+}
+
+func buildContext(query string, selected []Skill) string {
 	if len(selected) == 0 {
 		return ""
 	}
+	queryTokens := tokenize(query)
 	lines := []string{"## Relevant Skills", "Use these skill notes when they are helpful for the current request."}
 	for index, skill := range selected {
 		headline := fmt.Sprintf("%d. %s", index+1, skill.Name)
 		if skill.Metadata.Score > 0 {
 			headline += fmt.Sprintf(" [score %d]", skill.Metadata.Score)
 		}
-		lines = append(lines, fmt.Sprintf("%s: %s\n%s", headline, skill.Description, memory.LimitText(promptSafeSkillContent(skill), maxSkillContentChars)))
+		lines = append(lines, fmt.Sprintf("%s: %s\n%s", headline, skill.Description, memory.LimitText(promptSafeSkillContentForQuery(skill, queryTokens), maxSkillContentChars)))
 	}
 	return strings.Join(lines, "\n\n")
 }
 
 func promptSafeSkillContent(skill Skill) string {
+	return promptSafeSkillContentForQuery(skill, nil)
+}
+
+func promptSafeSkillContentForQuery(skill Skill, queryTokens []string) string {
 	if !skill.Metadata.Auto {
 		return skill.Content
 	}
-	return stripMarkdownSection(skill.Content, "## Recent Examples")
+	content := stripMarkdownSection(skill.Content, "## Recent Examples")
+	if len(queryTokens) == 0 {
+		return content
+	}
+	if selected := selectAutoSkillPromptSections(content, queryTokens); selected != "" {
+		return selected
+	}
+	return content
 }
 
 func stripMarkdownSection(content, heading string) string {
@@ -163,6 +183,103 @@ func stripMarkdownSection(content, heading string) string {
 		filtered = append(filtered, line)
 	}
 	return strings.TrimRight(strings.Join(filtered, "\n"), "\n") + "\n"
+}
+
+type markdownSection struct {
+	Heading string
+	Text    string
+}
+
+func selectAutoSkillPromptSections(content string, queryTokens []string) string {
+	content = stripMarkdownSection(content, "## Recent Captures")
+	content = stripMarkdownSection(content, "## Metrics")
+	sections := splitMarkdownSections(content)
+	if len(sections) == 0 {
+		return ""
+	}
+	preferred := map[string]struct{}{
+		"## When To Use":       {},
+		"## Decision Hints":    {},
+		"## Procedure":         {},
+		"## Watchouts":         {},
+		"## Final Outcome":     {},
+		"## Recommended Tools": {},
+	}
+	orderedPreferred := []string{"## When To Use", "## Decision Hints", "## Procedure", "## Watchouts", "## Final Outcome", "## Recommended Tools"}
+	byHeading := map[string]markdownSection{}
+	intro := ""
+	for _, section := range sections {
+		if section.Heading == "" {
+			intro = strings.TrimSpace(section.Text)
+			continue
+		}
+		byHeading[section.Heading] = section
+	}
+	parts := []string{}
+	if intro != "" {
+		parts = append(parts, intro)
+	}
+	for _, heading := range orderedPreferred {
+		if section, ok := byHeading[heading]; ok {
+			parts = append(parts, strings.TrimSpace(section.Text))
+		}
+	}
+	for _, section := range sections {
+		if section.Heading == "" {
+			continue
+		}
+		if _, ok := preferred[section.Heading]; ok {
+			continue
+		}
+		if sectionMatchesQuery(section.Text, queryTokens) {
+			parts = append(parts, strings.TrimSpace(section.Text))
+		}
+	}
+	if len(parts) <= 1 {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n")) + "\n"
+}
+
+func splitMarkdownSections(content string) []markdownSection {
+	lines := strings.Split(content, "\n")
+	sections := []markdownSection{}
+	currentHeading := ""
+	currentLines := []string{}
+	flush := func() {
+		text := strings.TrimRight(strings.Join(currentLines, "\n"), "\n")
+		if strings.TrimSpace(text) == "" {
+			currentLines = nil
+			return
+		}
+		sections = append(sections, markdownSection{Heading: currentHeading, Text: text})
+		currentLines = nil
+	}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			flush()
+			currentHeading = trimmed
+			currentLines = append(currentLines, line)
+			continue
+		}
+		currentLines = append(currentLines, line)
+	}
+	flush()
+	return sections
+}
+
+func sectionMatchesQuery(text string, queryTokens []string) bool {
+	if len(queryTokens) == 0 {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, token := range queryTokens {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func readSkill(path string) (Skill, error) {
@@ -218,13 +335,13 @@ func firstParagraph(content string) string {
 }
 
 func scoreSkill(skill Skill, tokens []string) int {
-	text := strings.ToLower(skill.Name + " " + skill.Description + " " + promptSafeSkillContent(skill) + " " + strings.Join(skill.Metadata.Keywords, " "))
 	score := 0
-	for _, token := range tokens {
-		if strings.Contains(text, token) {
-			score++
-		}
-	}
+	score += scoreTextField(skill.Name, tokens, 6)
+	score += scoreTextField(skill.Description, tokens, 4)
+	score += scoreTextField(strings.Join(skill.Metadata.Keywords, " "), tokens, 5)
+	score += scoreTextField(strings.Join(skill.Metadata.Tools, " "), tokens, 4)
+	score += scoreTextField(metadataGuidanceText(skill.Metadata), tokens, 3)
+	score += scoreTextField(scoringSafeSkillContent(skill), tokens, 1)
 	if score == 0 {
 		return 0
 	}
@@ -233,6 +350,39 @@ func scoreSkill(skill Skill, tokens []string) int {
 		score += minInt(3, skill.Metadata.SuccessCount-skill.Metadata.FailureCount)
 	}
 	return score
+}
+
+func scoreTextField(text string, tokens []string, weight int) int {
+	if weight <= 0 || len(tokens) == 0 || strings.TrimSpace(text) == "" {
+		return 0
+	}
+	lower := strings.ToLower(text)
+	score := 0
+	for _, token := range tokens {
+		if strings.Contains(lower, token) {
+			score += weight
+		}
+	}
+	return score
+}
+
+func metadataGuidanceText(meta SkillMetadata) string {
+	parts := []string{}
+	parts = append(parts, meta.DecisionHints...)
+	parts = append(parts, meta.Procedure...)
+	parts = append(parts, meta.Watchouts...)
+	parts = append(parts, meta.FinalOutcome)
+	return strings.Join(parts, " ")
+}
+
+func scoringSafeSkillContent(skill Skill) string {
+	content := promptSafeSkillContent(skill)
+	if !skill.Metadata.Auto {
+		return content
+	}
+	content = stripMarkdownSection(content, "## Recent Captures")
+	content = stripMarkdownSection(content, "## Metrics")
+	return content
 }
 
 func tokenize(query string) []string {

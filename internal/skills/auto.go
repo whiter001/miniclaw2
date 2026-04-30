@@ -40,6 +40,10 @@ type SkillMetadata struct {
 	QualityScore    int            `json:"quality_score,omitempty"`
 	QualityReasons  []string       `json:"quality_reasons,omitempty"`
 	QualityWarnings []string       `json:"quality_warnings,omitempty"`
+	DecisionHints   []string       `json:"decision_hints,omitempty"`
+	Procedure       []string       `json:"procedure,omitempty"`
+	Watchouts       []string       `json:"watchouts,omitempty"`
+	FinalOutcome    string         `json:"final_outcome,omitempty"`
 	CaptureCount    int            `json:"capture_count,omitempty"`
 	SelectedCount   int            `json:"selected_count,omitempty"`
 	SuccessCount    int            `json:"success_count,omitempty"`
@@ -90,6 +94,13 @@ type autoSkillQualityReport struct {
 	Score        int
 	Reasons      []string
 	Warnings     []string
+}
+
+type autoSkillGuidance struct {
+	DecisionHints []string
+	Procedure     []string
+	Watchouts     []string
+	FinalOutcome  string
 }
 
 var (
@@ -392,6 +403,10 @@ func readSkillMetadata(path string) (SkillMetadata, error) {
 	meta.Tools = compactStrings(meta.Tools)
 	meta.QualityReasons = compactStrings(meta.QualityReasons)
 	meta.QualityWarnings = compactStrings(meta.QualityWarnings)
+	meta.DecisionHints = compactStrings(meta.DecisionHints)
+	meta.Procedure = compactStrings(meta.Procedure)
+	meta.Watchouts = compactStrings(meta.Watchouts)
+	meta.FinalOutcome = strings.TrimSpace(meta.FinalOutcome)
 	meta.Examples = sanitizeStoredExamples(meta.Examples)
 	return meta, nil
 }
@@ -401,6 +416,10 @@ func writeSkillMetadata(path string, meta SkillMetadata) error {
 	meta.Tools = compactStrings(meta.Tools)
 	meta.QualityReasons = compactStrings(meta.QualityReasons)
 	meta.QualityWarnings = compactStrings(meta.QualityWarnings)
+	meta.DecisionHints = compactStrings(meta.DecisionHints)
+	meta.Procedure = compactStrings(meta.Procedure)
+	meta.Watchouts = compactStrings(meta.Watchouts)
+	meta.FinalOutcome = strings.TrimSpace(meta.FinalOutcome)
 	meta.Examples = sanitizeStoredExamples(meta.Examples)
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -529,6 +548,13 @@ func upsertAutoSkill(cfg config.Config, experience sessionExperience, quality au
 	meta.QualityScore = quality.Score
 	meta.QualityReasons = mergeOrdered(meta.QualityReasons, quality.Reasons)
 	meta.QualityWarnings = mergeOrdered(meta.QualityWarnings, quality.Warnings)
+	guidance := buildAutoSkillGuidance(experience, quality)
+	meta.DecisionHints = mergeOrdered(meta.DecisionHints, guidance.DecisionHints)
+	meta.Procedure = mergeOrdered(meta.Procedure, guidance.Procedure)
+	meta.Watchouts = mergeOrdered(meta.Watchouts, guidance.Watchouts)
+	if guidance.FinalOutcome != "" {
+		meta.FinalOutcome = guidance.FinalOutcome
+	}
 	meta.Examples = compactExamples(append([]SkillExample{{
 		RequestSummary: sanitizeExampleText(experience.Prompt, maxExamplePromptChars),
 		OutcomeSummary: sanitizeExampleText(experience.Response, maxExampleResponseChars),
@@ -617,6 +643,90 @@ func buildSkillSlug(tokens []string) string {
 	return strings.Join(parts, "-")
 }
 
+func buildAutoSkillGuidance(experience sessionExperience, quality autoSkillQualityReport) autoSkillGuidance {
+	guidance := autoSkillGuidance{}
+	keywords := firstStrings(experience.Keywords, 6)
+	tools := firstStrings(experience.ToolNames, 6)
+	if len(keywords) > 0 {
+		guidance.DecisionHints = append(guidance.DecisionHints, "Use when the request matches these stable tokens: "+strings.Join(keywords, ", ")+".")
+	}
+	if len(tools) > 0 {
+		guidance.DecisionHints = append(guidance.DecisionHints, "Prefer this skill when the workflow naturally uses: "+strings.Join(tools, ", ")+".")
+	}
+	if isExternalAnswerRequest(experience.Prompt) {
+		guidance.DecisionHints = append(guidance.DecisionHints, "Use only for external answer/reply tasks where submit evidence can be observed.")
+	}
+	if hasValidationSignal(experience) {
+		guidance.DecisionHints = append(guidance.DecisionHints, "A focused validation signal was observed in the successful capture.")
+	}
+
+	guidance.Procedure = append(guidance.Procedure, "Confirm the target, count, and required external action before applying the workflow.")
+	if len(tools) > 0 {
+		guidance.Procedure = append(guidance.Procedure, "Use the observed tool sequence as a starting point: "+strings.Join(tools, " -> ")+".")
+	} else {
+		guidance.Procedure = append(guidance.Procedure, "Inspect the current workspace or page state before changing anything.")
+	}
+	if isExternalAnswerRequest(experience.Prompt) {
+		guidance.Procedure = append(guidance.Procedure, "Submit each requested answer or reply and keep explicit submission evidence.")
+	} else {
+		guidance.Procedure = append(guidance.Procedure, "Apply the smallest action or edit that satisfies the captured request pattern.")
+	}
+	guidance.Procedure = append(guidance.Procedure, "Validate the result with a focused test, status check, or observed completion signal before reporting success.")
+
+	if quality.Tier == autoSkillTierCandidate {
+		guidance.Watchouts = append(guidance.Watchouts, "This capture is a candidate; wait for a cleaner repeat before treating it as a default workflow.")
+	}
+	if containsString(quality.Warnings, "recovered-from-failure") {
+		guidance.Watchouts = append(guidance.Watchouts, "A prior run recovered from a failed tool call; re-check that step before reuse.")
+	}
+	if isExternalAnswerRequest(experience.Prompt) {
+		guidance.Watchouts = append(guidance.Watchouts, "Do not treat browse-only answer pages as success; require submit/post evidence.")
+	}
+	if !hasValidationSignal(experience) {
+		guidance.Watchouts = append(guidance.Watchouts, "Do not report completion without an explicit validation or status signal.")
+	}
+	guidance.Watchouts = append(guidance.Watchouts, "Ignore environment-specific paths, timestamps, and run IDs from previous captures.")
+
+	guidance.FinalOutcome = summarizeFinalOutcome(experience, quality)
+	return guidance
+}
+
+func summarizeFinalOutcome(experience sessionExperience, quality autoSkillQualityReport) string {
+	if isExternalAnswerRequest(experience.Prompt) {
+		return "Submitted the requested external answers or replies and observed submission evidence."
+	}
+	if hasValidationSignal(experience) {
+		return "Completed the workflow and observed a validation signal before capture."
+	}
+	if quality.Tier == autoSkillTierCandidate {
+		return "Completed after recovery signals; keep as candidate until a cleaner repeat confirms the workflow."
+	}
+	if experience.SuccessfulToolCount > 0 {
+		return fmt.Sprintf("Completed the workflow cleanly with %d successful tool calls.", experience.SuccessfulToolCount)
+	}
+	return "Completed the captured workflow successfully."
+}
+
+func firstStrings(values []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	cleaned := compactStrings(values)
+	if len(cleaned) <= limit {
+		return cleaned
+	}
+	return cleaned[:limit]
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func renderAutoSkill(name string, meta SkillMetadata) string {
 	title := prettySkillTitle(name)
 	lines := []string{
@@ -646,14 +756,35 @@ func renderAutoSkill(name string, meta SkillMetadata) string {
 	if len(meta.Tools) == 0 {
 		lines = append(lines, "- (no stable tool pattern captured yet)")
 	}
-	lines = append(lines, "", "## Workflow Pattern")
-	if len(meta.Tools) == 0 {
+	lines = append(lines, "", "## Decision Hints")
+	if len(meta.DecisionHints) == 0 {
+		lines = append(lines, "- Use only when the request closely matches the keyword and tool pattern.")
+	} else {
+		for _, hint := range meta.DecisionHints {
+			lines = append(lines, "- "+hint)
+		}
+	}
+	lines = append(lines, "", "## Procedure")
+	if len(meta.Procedure) == 0 {
 		lines = append(lines, "1. Inspect the workspace before making changes.", "2. Keep the edit scope local.", "3. Validate with the narrowest executable check available.")
 	} else {
-		for index, toolName := range meta.Tools {
-			lines = append(lines, fmt.Sprintf("%d. Consider using %s when the task needs it.", index+1, toolName))
+		for index, step := range meta.Procedure {
+			lines = append(lines, fmt.Sprintf("%d. %s", index+1, step))
 		}
-		lines = append(lines, fmt.Sprintf("%d. Finish with a focused validation command before stopping.", len(meta.Tools)+1))
+	}
+	lines = append(lines, "", "## Watchouts")
+	if len(meta.Watchouts) == 0 {
+		lines = append(lines, "- Do not reuse stale environment details from prior captures.")
+	} else {
+		for _, watchout := range meta.Watchouts {
+			lines = append(lines, "- "+watchout)
+		}
+	}
+	lines = append(lines, "", "## Final Outcome")
+	if strings.TrimSpace(meta.FinalOutcome) == "" {
+		lines = append(lines, "Successful completion was observed before this autoskill was captured.")
+	} else {
+		lines = append(lines, meta.FinalOutcome)
 	}
 	lines = append(lines, "", "## Recent Captures")
 	if len(meta.Examples) == 0 {

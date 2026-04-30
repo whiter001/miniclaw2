@@ -41,7 +41,7 @@ func BuildPromptContextForQuery(cfg config.Config, query string) PromptContext {
 	if systemPrompt := LoadSystemPrompt(cfg); strings.TrimSpace(systemPrompt) != "" {
 		base = append(base, systemPrompt)
 	}
-	if relevantSkills := skills.BuildContext(selected); strings.TrimSpace(relevantSkills) != "" {
+	if relevantSkills := skills.BuildContextForQuery(query, selected); strings.TrimSpace(relevantSkills) != "" {
 		base = append(base, relevantSkills)
 	}
 	return PromptContext{Prompt: strings.Join(base, "\n\n"), Skills: selected}

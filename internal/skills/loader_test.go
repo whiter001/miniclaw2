@@ -185,6 +185,86 @@ func TestSelectIgnoresLegacyAutoSkillRawExamples(t *testing.T) {
 	}
 }
 
+func TestSelectIgnoresAutoSkillHistoryAndMetricsNoise(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "autoskill-generic", strings.Join([]string{
+		"# Generic",
+		"",
+		"Auto-generated from successful MiniClaw runs.",
+		"",
+		"## Decision Hints",
+		"- Use when the request is about report formatting.",
+		"",
+		"## Procedure",
+		"1. Format the report.",
+		"",
+		"## Recent Captures",
+		"### Capture 1",
+		"Outcome summary: deploy vault tokens",
+		"",
+		"## Metrics",
+		"- quality_reasons: deploy, vault, tokens",
+	}, "\n"))
+	if err := writeSkillMetadata(filepath.Join(root, "autoskill-generic", skillMetadataFileName), SkillMetadata{Auto: true, Score: 100, Keywords: []string{"report"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	selected := Select("deploy vault tokens", 2, Discover(root))
+	if len(selected) != 0 {
+		t.Fatalf("expected history and metrics noise to be ignored during selection, got %+v", selected)
+	}
+}
+
+func TestBuildContextForQueryTrimsAutoSkillToGuidanceSections(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "autoskill-deploy", strings.Join([]string{
+		"# Deploy",
+		"",
+		"Auto-generated from successful MiniClaw runs.",
+		"",
+		"## When To Use",
+		"Use this for deploy tasks.",
+		"",
+		"## Decision Hints",
+		"- Use when the request mentions deploy service.",
+		"",
+		"## Procedure",
+		"1. Read deployment notes.",
+		"2. Validate status.",
+		"",
+		"## Watchouts",
+		"- Do not reuse stale paths.",
+		"",
+		"## Final Outcome",
+		"Completed deployment with validation evidence.",
+		"",
+		"## Recent Captures",
+		"history marker that should not enter prompt",
+		"",
+		"## Metrics",
+		"metrics marker that should not enter prompt",
+	}, "\n"))
+	if err := writeSkillMetadata(filepath.Join(root, "autoskill-deploy", skillMetadataFileName), SkillMetadata{Auto: true, Score: 80, Keywords: []string{"deploy", "service"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	selected := Select("deploy service", 2, Discover(root))
+	if len(selected) != 1 {
+		t.Fatalf("expected deploy autoskill to be selected, got %+v", selected)
+	}
+	context := BuildContextForQuery("deploy service", selected)
+	for _, expected := range []string{"## Decision Hints", "## Procedure", "## Watchouts", "## Final Outcome"} {
+		if !strings.Contains(context, expected) {
+			t.Fatalf("expected %s in trimmed context, got %s", expected, context)
+		}
+	}
+	for _, noisy := range []string{"history marker", "metrics marker"} {
+		if strings.Contains(context, noisy) {
+			t.Fatalf("expected noisy autoskill section to be trimmed, got %s", context)
+		}
+	}
+}
+
 func TestUpdateSelectedSkillScoresCreatesMetadataForManualSkill(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "testing", "# Testing\n\nUse Go unit tests and table-driven coverage for handler changes.")
@@ -286,6 +366,42 @@ func TestAutoCaptureSessionCreatesAndUpdatesSkill(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(loaded[0].Metadata.Tools, ","), "read_file") {
 		t.Fatalf("expected tool metadata, got %+v", loaded[0].Metadata)
+	}
+}
+
+func TestAutoCaptureSessionRendersStructuredGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.EnableAutoSkills = true
+	cfg.AutoSkillMinToolCalls = 2
+
+	sessionPath := filepath.Join(workspace, "sessions", "session-guidance.jsonl")
+	writeSession(t, sessionPath, []string{
+		jsonLine(t, map[string]any{"kind": "message", "role": "user", "content": "add go unit tests for handler"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "read_file", "content": "read handler implementation"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "write_file", "content": "wrote handler tests"}),
+		jsonLine(t, map[string]any{"kind": "tool", "tool_name": "exec", "content": "go test ./internal/handler passed"}),
+		jsonLine(t, map[string]any{"kind": "message", "role": "assistant", "content": "added handler unit tests and verified them"}),
+	})
+
+	if err := AutoCaptureSession(cfg, sessionPath, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded := Discover(filepath.Join(workspace, "skills"))
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 autoskill, got %d", len(loaded))
+	}
+	for _, section := range []string{"## Decision Hints", "## Procedure", "## Watchouts", "## Final Outcome"} {
+		if !strings.Contains(loaded[0].Content, section) {
+			t.Fatalf("expected %s section, got %s", section, loaded[0].Content)
+		}
+	}
+	if len(loaded[0].Metadata.DecisionHints) == 0 || len(loaded[0].Metadata.Procedure) == 0 || len(loaded[0].Metadata.Watchouts) == 0 || loaded[0].Metadata.FinalOutcome == "" {
+		t.Fatalf("expected structured guidance metadata, got %+v", loaded[0].Metadata)
+	}
+	if !strings.Contains(loaded[0].Content, "validation signal") {
+		t.Fatalf("expected validation-aware guidance, got %s", loaded[0].Content)
 	}
 }
 
