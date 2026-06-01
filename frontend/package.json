@@ -9,14 +9,14 @@
     "start": "NODE_ENV=production bun src/index.ts"
   },
   "dependencies": {
-    "antd": "^6.3.6",
-    "react": "^19",
-    "react-dom": "^19",
-    "react-router-dom": "^7.14.2"
+    "antd": "^6.4.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.16.0"
   },
   "devDependencies": {
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
     "@types/bun": "latest"
   }
 }

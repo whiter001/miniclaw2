@@ -9,50 +9,50 @@ import (
 )
 
 type Config struct {
-	HomeDir                     string
-	Workspace                   string
-	ConfigPath                  string
-	MCPConfigPath               string
-	APIKey                      string
-	BaseURL                     string
-	Model                       string
-	Temperature                 float64
-	MaxTokens                   int
-	RequestTimeout              int
-	EnableMCP                   bool
-	MCPBasePath                 string
-	MCPResourceMode             string
-	GatewayChannel              string
-	QQAppID                     string
-	QQToken                     string
-	QQAppSecret                 string
-	QQAPIBase                   string
-	QQWebhookHost               string
-	QQWebhookPort               int
-	QQWebhookPath               string
-	QQAuthCallbackPath          string
-	QQAllowUsers                string
-	QQAllowGroups               string
-	QQProcessingText            string
-	WeixinAPIBase               string
-	WeixinCDNBase               string
-	WeixinToken                 string
-	WeixinAccountID             string
-	WeixinAllowUsers            string
-	WeixinProcessingText        string
-	MaxToolIterations           int
-	MemoryRecentDays            int
-	MemoryRecentChars           int
-	MemorySummaryMaxLines       int
-	MemorySummaryMaxChars       int
-	MemoryDailyEntryMaxChars    int
-	MemorySignificanceThreshold int
-	MemoryPruneKeepDays         int
-	EnableAutoSkills            bool
-	EnableSkillScoring          bool
-	AutoSkillMinToolCalls       int
-	AutoSkillMaxExamples        int
-	SkillSelectionLimit         int
+	HomeDir                     string  `json:"home_dir"`
+	Workspace                   string  `json:"workspace"`
+	ConfigPath                  string  `json:"config_path"`
+	MCPConfigPath               string  `json:"mcp_config_path"`
+	APIKey                      string  `json:"api_key"`
+	BaseURL                     string  `json:"base_url"`
+	Model                       string  `json:"model"`
+	Temperature                 float64 `json:"temperature"`
+	MaxTokens                   int     `json:"max_tokens"`
+	RequestTimeout              int     `json:"request_timeout"`
+	EnableMCP                   bool    `json:"enable_mcp"`
+	MCPBasePath                 string  `json:"mcp_base_path"`
+	MCPResourceMode             string  `json:"mcp_resource_mode"`
+	GatewayChannel              string  `json:"gateway_channel"`
+	QQAppID                     string  `json:"qq_app_id"`
+	QQToken                     string  `json:"qq_token"`
+	QQAppSecret                 string  `json:"qq_app_secret"`
+	QQAPIBase                   string  `json:"qq_api_base"`
+	QQWebhookHost               string  `json:"qq_webhook_host"`
+	QQWebhookPort               int     `json:"qq_webhook_port"`
+	QQWebhookPath               string  `json:"qq_webhook_path"`
+	QQAuthCallbackPath          string  `json:"qq_auth_callback_path"`
+	QQAllowUsers                string  `json:"qq_allow_users"`
+	QQAllowGroups               string  `json:"qq_allow_groups"`
+	QQProcessingText            string  `json:"qq_processing_text"`
+	WeixinAPIBase               string  `json:"weixin_api_base"`
+	WeixinCDNBase               string  `json:"weixin_cdn_base"`
+	WeixinToken                 string  `json:"weixin_token"`
+	WeixinAccountID             string  `json:"weixin_account_id"`
+	WeixinAllowUsers            string  `json:"weixin_allow_users"`
+	WeixinProcessingText        string  `json:"weixin_processing_text"`
+	MaxToolIterations           int     `json:"max_tool_iterations"`
+	MemoryRecentDays            int     `json:"memory_recent_days"`
+	MemoryRecentChars           int     `json:"memory_recent_chars"`
+	MemorySummaryMaxLines       int     `json:"memory_summary_max_lines"`
+	MemorySummaryMaxChars       int     `json:"memory_summary_max_chars"`
+	MemoryDailyEntryMaxChars    int     `json:"memory_daily_entry_max_chars"`
+	MemorySignificanceThreshold int     `json:"memory_significance_threshold"`
+	MemoryPruneKeepDays         int     `json:"memory_prune_keep_days"`
+	EnableAutoSkills            bool    `json:"enable_auto_skills"`
+	EnableSkillScoring          bool    `json:"enable_skill_scoring"`
+	AutoSkillMinToolCalls       int     `json:"auto_skill_min_tool_calls"`
+	AutoSkillMaxExamples        int     `json:"auto_skill_max_examples"`
+	SkillSelectionLimit         int     `json:"skill_selection_limit"`
 }
 
 func Default() Config {

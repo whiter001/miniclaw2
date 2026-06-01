@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"miniclaw2/internal/memory"
 	"miniclaw2/internal/provider/minimax"
 	"miniclaw2/internal/session"
+	"miniclaw2/internal/skills"
 	"miniclaw2/internal/workspace"
 )
 
@@ -62,6 +64,10 @@ func Run(args []string) int {
 		return runAgent(cfg, commandArgs)
 	case "memory":
 		return runMemory(cfg, commandArgs)
+	case "config":
+		return runConfig(cfg, commandArgs)
+	case "skill":
+		return runSkills(cfg, commandArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
 		printHelp()
@@ -108,6 +114,8 @@ func printHelp() {
 	fmt.Println("  miniclaw gateway logout [--channel weixin] [--account ACCOUNT]   Remove a Weixin account")
 	fmt.Println("  miniclaw agent [-p PROMPT] [--workspace PATH] [--mcp]    Run agent")
 	fmt.Println("  miniclaw memory [show|set|append|today|summarize|compact|prune|clear]    Manage memory files")
+	fmt.Println("  miniclaw skill [list|create|delete]    Manage skills")
+	fmt.Println("  miniclaw config [--json]      Show current configuration")
 	fmt.Println("  miniclaw --version            Show version")
 	fmt.Println()
 	fmt.Println("Environment variables:")
@@ -454,6 +462,38 @@ func runCron(cfg config.Config, args []string) int {
 			return 1
 		}
 		return 0
+	case "add":
+		id := flagValue(commandArgs, "--id")
+		prompt := parsePromptArg(commandArgs)
+		schedule := flagValue(commandArgs, "--schedule")
+		if id == "" || prompt == "" || schedule == "" {
+			fmt.Fprintln(os.Stderr, "usage: miniclaw cron add --id ID --schedule \"SCHED\" -p \"PROMPT\"")
+			return 1
+		}
+		task := cronpkg.Task{
+			ID:       id,
+			Prompt:   prompt,
+			Schedule: schedule,
+			Enabled:  true,
+		}
+		if err := cronpkg.SaveTask(cfg.Workspace, task); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to add cron task: %v\n", err)
+			return 1
+		}
+		fmt.Printf("cron task added: %s\n", id)
+		return 0
+	case "delete":
+		id := flagValue(commandArgs, "--id")
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: miniclaw cron delete --id ID")
+			return 1
+		}
+		if err := cronpkg.DeleteTask(cfg.Workspace, id); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to delete cron task: %v\n", err)
+			return 1
+		}
+		fmt.Printf("cron task deleted: %s\n", id)
+		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "unknown cron subcommand: %s\n", command)
 		fmt.Fprintln(os.Stderr, "usage: miniclaw cron [list|run|serve|trigger]")
@@ -783,4 +823,84 @@ func containsString(values []string, target string) bool {
 
 func filepathJoin(parts ...string) string {
 	return strings.Join(parts, string(os.PathSeparator))
+}
+
+func runConfig(cfg config.Config, args []string) int {
+	if hasFlag(args, "--json") {
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to serialize config: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+	fmt.Printf("HomeDir: %s\n", cfg.HomeDir)
+	fmt.Printf("Workspace: %s\n", cfg.Workspace)
+	fmt.Printf("ConfigPath: %s\n", cfg.ConfigPath)
+	fmt.Printf("MCPConfigPath: %s\n", cfg.MCPConfigPath)
+	fmt.Printf("APIKey: %s\n", maskSecret(cfg.APIKey))
+	fmt.Printf("BaseURL: %s\n", cfg.BaseURL)
+	fmt.Printf("Model: %s\n", cfg.Model)
+	fmt.Printf("GatewayChannel: %s\n", cfg.GatewayChannel)
+	return 0
+}
+
+func maskSecret(s string) string {
+	if len(s) <= 8 {
+		return "****"
+	}
+	return s[:4] + "****" + s[len(s)-4:]
+}
+
+func runSkills(cfg config.Config, args []string) int {
+	if ensureRuntimeReady(cfg) != 0 {
+		return 1
+	}
+	command := "list"
+	if len(args) > 0 {
+		command = args[0]
+	}
+	switch command {
+	case "list":
+		skills := skills.ListSkills(cfg)
+		if hasFlag(args, "--json") {
+			data, _ := json.MarshalIndent(skills, "", "  ")
+			fmt.Println(string(data))
+			return 0
+		}
+		for _, s := range skills {
+			fmt.Printf("- %-15s Score=%d Tools=%v\n", s.Metadata.Slug, s.Metadata.Score, s.Metadata.Tools)
+		}
+		return 0
+	case "create":
+		name := flagValue(args, "--name")
+		content := parsePromptArg(args)
+		if name == "" || content == "" {
+			fmt.Fprintln(os.Stderr, "usage: miniclaw skill create --name \"NAME\" -p \"CONTENT\"")
+			return 1
+		}
+		_, err := skills.CreateSkill(cfg, name, content, true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create skill: %v\n", err)
+			return 1
+		}
+		fmt.Printf("skill created: %s\n", name)
+		return 0
+	case "delete":
+		name := flagValue(args, "--name")
+		if name == "" {
+			fmt.Fprintln(os.Stderr, "usage: miniclaw skill delete --name \"NAME\"")
+			return 1
+		}
+		if err := skills.DeleteSkill(cfg, name); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to delete skill: %v\n", err)
+			return 1
+		}
+		fmt.Printf("skill deleted: %s\n", name)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "unknown skill command: %s\n", command)
+		return 1
+	}
 }

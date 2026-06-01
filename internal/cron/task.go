@@ -104,6 +104,42 @@ func loadTaskFile(path string) (Task, error) {
 	return task, nil
 }
 
+func SaveTask(workspace string, task Task) error {
+	if strings.TrimSpace(task.ID) == "" {
+		return fmt.Errorf("task ID is required")
+	}
+	taskDir := filepath.Join(workspace, TaskDirName)
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		return err
+	}
+
+	enabled := task.Enabled
+	skip := task.SkipIfRunning
+	raw := taskFile{
+		ID:                task.ID,
+		Description:       task.Description,
+		Schedule:          task.Schedule,
+		Prompt:            task.Prompt,
+		Enabled:           &enabled,
+		SkipIfRunning:     &skip,
+		TimeoutSeconds:    int(task.Timeout.Seconds()),
+		MaxToolIterations: task.MaxToolIterations,
+		EnableMCP:         task.EnableMCP,
+	}
+
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(taskDir, task.ID+".json")
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func DeleteTask(workspace string, taskID string) error {
+	path := filepath.Join(workspace, TaskDirName, taskID+".json")
+	return os.Remove(path)
+}
+
 func ValidateTask(task Task) error {
 	if strings.TrimSpace(task.ID) == "" {
 		return fmt.Errorf("invalid cron task %s: missing id", task.FilePath)

@@ -93,186 +93,71 @@ function defaultConfig(): RuntimeConfig {
   };
 }
 
-function expandHomePath(value: string) {
-  if (!value) {
-    return value;
-  }
-  if (value === "~") {
-    return homedir();
-  }
-  if (value.startsWith("~/")) {
-    return join(homedir(), value.slice(2));
-  }
-  return value;
-}
+export function loadRuntimeConfig(): RuntimeConfig {
+  const frontendRoot = resolve(import.meta.dir, "..");
+  const repoRoot = resolve(frontendRoot, "..");
+  const miniclawBinaryPath = join(repoRoot, "miniclaw");
 
-function applyConfigValue(config: RuntimeConfig, key: string, value: string) {
-  switch (key) {
-    case "home_dir":
-      config.homeDir = expandHomePath(value);
-      return;
-    case "workspace":
-      config.workspaceDir = expandHomePath(value);
-      return;
-    case "mcp_config_path":
-      config.mcpConfigPath = expandHomePath(value);
-      return;
-    case "api_key":
-      config.apiKey = value;
-      return;
-    case "base_url":
-    case "api_url":
-      config.baseUrl = value;
-      return;
-    case "model":
-      config.model = value;
-      return;
-    case "enable_mcp":
-      config.enableMcp = value === "true";
-      return;
-    case "gateway_channel":
-      config.gatewayChannel = value || "qq";
-      return;
-    case "qq_webhook_host":
-      config.qqWebhookHost = value || config.qqWebhookHost;
-      return;
-    case "qq_webhook_port": {
-      const parsed = Number.parseInt(value, 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        config.qqWebhookPort = parsed;
-      }
-      return;
-    }
-    case "qq_webhook_path":
-      config.qqWebhookPath = value || config.qqWebhookPath;
-      return;
-    case "qq_allow_users":
-      config.qqAllowUsers = value;
-      return;
-    case "qq_allow_groups":
-      config.qqAllowGroups = value;
-      return;
-    case "weixin_allow_users":
-      config.weixinAllowUsers = value;
-      return;
-    case "weixin_token":
-      config.weixinToken = value;
-      return;
-    case "enable_auto_skills":
-      config.enableAutoSkills = value !== "false";
-      return;
-    case "enable_skill_scoring":
-      config.enableSkillScoring = value !== "false";
-      return;
-    case "max_tool_iterations": {
-      const parsed = Number.parseInt(value, 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        config.maxToolIterations = parsed;
-      }
-      return;
-    }
-  }
-}
+  const cmd = existsSync(miniclawBinaryPath)
+    ? [miniclawBinaryPath, "config", "--json"]
+    : ["go", "run", "cmd/miniclaw/main.go", "config", "--json"];
 
-function parseConfigFile(configPath: string, config: RuntimeConfig) {
-  if (!existsSync(configPath)) {
-    return config;
-  }
-  const content = readFileSync(configPath, "utf8");
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const separator = trimmed.indexOf("=");
-    if (separator <= 0) {
-      continue;
-    }
-    const key = trimmed.slice(0, separator).trim();
-    const value = trimmed.slice(separator + 1).trim();
-    applyConfigValue(config, key, value);
-  }
-  return config;
-}
+  try {
+    const proc = Bun.spawnSync({
+      cmd,
+      cwd: repoRoot,
+      env: process.env,
+    });
 
-function applyEnvOverrides(config: RuntimeConfig) {
-  if (process.env.MINICLAW_HOME?.trim()) {
-    config.homeDir = expandHomePath(process.env.MINICLAW_HOME.trim());
-  }
-  if (process.env.MINICLAW_WORKSPACE?.trim()) {
-    config.workspaceDir = expandHomePath(process.env.MINICLAW_WORKSPACE.trim());
-  }
-  if (process.env.MINICLAW_MCP_CONFIG_PATH?.trim()) {
-    config.mcpConfigPath = expandHomePath(process.env.MINICLAW_MCP_CONFIG_PATH.trim());
-  }
-  if (process.env.MINICLAW_API_KEY !== undefined) {
-    config.apiKey = process.env.MINICLAW_API_KEY;
-  }
-  if (process.env.ANTHROPIC_BASE_URL?.trim()) {
-    config.baseUrl = process.env.ANTHROPIC_BASE_URL.trim();
-  }
-  if (process.env.MINICLAW_API_URL?.trim()) {
-    config.baseUrl = process.env.MINICLAW_API_URL.trim();
-  }
-  if (process.env.MINICLAW_MODEL?.trim()) {
-    config.model = process.env.MINICLAW_MODEL.trim();
-  }
-  if (process.env.MINICLAW_ENABLE_MCP?.trim()) {
-    config.enableMcp = process.env.MINICLAW_ENABLE_MCP.trim() === "true";
-  }
-  if (process.env.MINICLAW_GATEWAY_CHANNEL?.trim()) {
-    config.gatewayChannel = process.env.MINICLAW_GATEWAY_CHANNEL.trim();
-  }
-  if (process.env.MINICLAW_QQ_WEBHOOK_HOST?.trim()) {
-    config.qqWebhookHost = process.env.MINICLAW_QQ_WEBHOOK_HOST.trim();
-  }
-  if (process.env.MINICLAW_QQ_WEBHOOK_PORT?.trim()) {
-    const parsed = Number.parseInt(process.env.MINICLAW_QQ_WEBHOOK_PORT.trim(), 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      config.qqWebhookPort = parsed;
+    if (proc.success) {
+      const parsed = JSON.parse(proc.stdout.toString());
+      return {
+        homeDir: parsed.home_dir,
+        workspaceDir: parsed.workspace,
+        configPath: parsed.config_path,
+        mcpConfigPath: parsed.mcp_config_path,
+        apiKey: parsed.api_key,
+        baseUrl: parsed.base_url,
+        model: parsed.model,
+        enableMcp: parsed.enable_mcp,
+        gatewayChannel: parsed.gateway_channel,
+        qqWebhookHost: parsed.qq_webhook_host,
+        qqWebhookPort: parsed.qq_webhook_port,
+        qqWebhookPath: parsed.qq_webhook_path,
+        qqAllowUsers: parsed.qq_allow_users,
+        qqAllowGroups: parsed.qq_allow_groups,
+        weixinAllowUsers: parsed.weixin_allow_users,
+        weixinToken: parsed.weixin_token,
+        enableAutoSkills: parsed.enable_auto_skills,
+        enableSkillScoring: parsed.enable_skill_scoring,
+        maxToolIterations: parsed.max_tool_iterations,
+      };
     }
+  } catch (e) {
+    console.error("Failed to load config via CLI, using defaults:", e);
   }
-  if (process.env.MINICLAW_QQ_WEBHOOK_PATH?.trim()) {
-    config.qqWebhookPath = process.env.MINICLAW_QQ_WEBHOOK_PATH.trim();
-  }
-  if (process.env.MINICLAW_QQ_ALLOW_USERS !== undefined) {
-    config.qqAllowUsers = process.env.MINICLAW_QQ_ALLOW_USERS;
-  }
-  if (process.env.MINICLAW_QQ_ALLOW_GROUPS !== undefined) {
-    config.qqAllowGroups = process.env.MINICLAW_QQ_ALLOW_GROUPS;
-  }
-  if (process.env.MINICLAW_WEIXIN_ALLOW_USERS !== undefined) {
-    config.weixinAllowUsers = process.env.MINICLAW_WEIXIN_ALLOW_USERS;
-  }
-  if (process.env.MINICLAW_WEIXIN_TOKEN !== undefined) {
-    config.weixinToken = process.env.MINICLAW_WEIXIN_TOKEN;
-  }
-  if (process.env.MINICLAW_ENABLE_AUTO_SKILLS?.trim()) {
-    config.enableAutoSkills = process.env.MINICLAW_ENABLE_AUTO_SKILLS.trim() !== "false";
-  }
-  if (process.env.MINICLAW_ENABLE_SKILL_SCORING?.trim()) {
-    config.enableSkillScoring = process.env.MINICLAW_ENABLE_SKILL_SCORING.trim() !== "false";
-  }
-  if (process.env.MINICLAW_MAX_TOOL_ITERATIONS?.trim()) {
-    const parsed = Number.parseInt(process.env.MINICLAW_MAX_TOOL_ITERATIONS.trim(), 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      config.maxToolIterations = parsed;
-    }
-  }
-  return config;
-}
 
-export function loadRuntimeConfig() {
-  const config = applyEnvOverrides(parseConfigFile(defaultConfig().configPath, defaultConfig()));
-  config.homeDir = expandHomePath(config.homeDir);
-  config.workspaceDir = expandHomePath(config.workspaceDir);
-  config.configPath = expandHomePath(config.configPath);
-  config.mcpConfigPath = expandHomePath(config.mcpConfigPath);
-  return config;
+  return defaultConfig();
 }
 
 export function getBinaryMode(miniclawBinaryPath: string): BinaryMode {
   return existsSync(miniclawBinaryPath) ? "binary" : "go-run";
+}
+
+function runCliSync(args: string[]) {
+  const frontendRoot = resolve(import.meta.dir, "..");
+  const repoRoot = resolve(frontendRoot, "..");
+  const miniclawBinaryPath = join(repoRoot, "miniclaw");
+
+  const cmd = existsSync(miniclawBinaryPath)
+    ? [miniclawBinaryPath, ...args]
+    : ["go", "run", "cmd/miniclaw/main.go", ...args];
+
+  return Bun.spawnSync({
+    cmd,
+    cwd: repoRoot,
+    env: process.env,
+  });
 }
 
 function safeReadJson<T>(filePath: string): T | null {
@@ -426,49 +311,31 @@ function validateTaskPayload(payload: TaskWritePayload, existingId?: string) {
 
 export function saveTask(payload: TaskWritePayload, existingId?: string) {
   const { id, previousId } = validateTaskPayload(payload, existingId);
-  const { workspaceDir } = loadRuntimeConfig();
-  mkdirSync(cronDir(workspaceDir), { recursive: true });
-  const nextPayload: TaskFilePayload = {
-    id,
-    description: payload.description?.trim() || undefined,
-    schedule: payload.schedule.trim(),
-    prompt: payload.prompt.trim(),
-    enabled: payload.enabled ?? true,
-    skip_if_running: payload.skipIfRunning ?? true,
-    timeout_seconds: payload.timeoutSeconds && payload.timeoutSeconds > 0 ? payload.timeoutSeconds : defaultTaskTimeoutSeconds,
-    max_tool_iterations: payload.maxToolIterations ?? 0,
-  };
-  if (payload.enableMcp !== null && payload.enableMcp !== undefined) {
-    nextPayload.enable_mcp = payload.enableMcp;
-  }
-
-  const targetFilePath = resolveChildFile(cronDir(workspaceDir), id, ".json");
-  writeFileSync(targetFilePath, `${JSON.stringify(nextPayload, null, 2)}\n`, "utf8");
-
+  
   if (previousId && previousId !== id) {
-    const previousFilePath = resolveChildFile(cronDir(workspaceDir), previousId, ".json");
-    if (existsSync(previousFilePath)) {
-      unlinkSync(previousFilePath);
-    }
-    const previousStatePath = taskStatePath(workspaceDir, previousId);
-    if (existsSync(previousStatePath)) {
-      unlinkSync(previousStatePath);
-    }
+    deleteTask(previousId);
   }
 
-  return listTasks().find(task => task.id === id) ?? normalizeTaskRecord(targetFilePath, readTaskState(workspaceDir, id));
+  const args = [
+    "cron", "add",
+    "--id", id,
+    "--schedule", payload.schedule.trim(),
+    "-p", payload.prompt.trim(),
+  ];
+  
+  const proc = runCliSync(args);
+  if (!proc.success) {
+    throw new Error(`Failed to save task: ${proc.stderr.toString()}`);
+  }
+
+  return listTasks().find(task => task.id === id)!;
 }
 
 export function deleteTask(taskId: string) {
   const resolvedId = normalizeTaskId(taskId, "缺少任务 ID。");
-  const { workspaceDir } = loadRuntimeConfig();
-  const taskFilePath = resolveChildFile(cronDir(workspaceDir), resolvedId, ".json");
-  if (existsSync(taskFilePath)) {
-    unlinkSync(taskFilePath);
-  }
-  const stateFilePath = taskStatePath(workspaceDir, resolvedId);
-  if (existsSync(stateFilePath)) {
-    unlinkSync(stateFilePath);
+  const proc = runCliSync(["cron", "delete", "--id", resolvedId]);
+  if (!proc.success) {
+    throw new Error(`Failed to delete task: ${proc.stderr.toString()}`);
   }
 }
 
@@ -711,24 +578,30 @@ function renderSkillDocument(payload: SkillWritePayload) {
 
 export function saveSkill(payload: SkillWritePayload, existingSlug?: string) {
   const { slug, previousSlug } = validateSkillPayload(payload, existingSlug);
-  const { workspaceDir } = loadRuntimeConfig();
-  const targetDir = resolveSkillDir(workspaceDir, slug);
-  mkdirSync(targetDir, { recursive: true });
-  const targetFilePath = join(targetDir, "SKILL.md");
-  writeFileSync(targetFilePath, renderSkillDocument(payload), "utf8");
+  
   if (previousSlug && previousSlug !== slug) {
-    const previousDir = resolveSkillDir(workspaceDir, previousSlug);
-    if (existsSync(previousDir)) {
-      rmSync(previousDir, { recursive: true, force: true });
-    }
+    deleteSkill(previousSlug);
   }
+
+  const proc = runCliSync([
+    "skill", "create",
+    "--name", slug,
+    "-p", payload.content.trim(),
+  ]);
+
+  if (!proc.success) {
+    throw new Error(`Failed to save skill: ${proc.stderr.toString()}`);
+  }
+
   return getSkillDetail(slug);
 }
 
 export function deleteSkill(slug: string) {
   const resolvedSlug = normalizeSkillSlug(slug, "缺少 Skill slug。");
-  const { workspaceDir } = loadRuntimeConfig();
-  rmSync(resolveSkillDir(workspaceDir, resolvedSlug), { recursive: true, force: true });
+  const proc = runCliSync(["skill", "delete", "--name", resolvedSlug]);
+  if (!proc.success) {
+    throw new Error(`Failed to delete skill: ${proc.stderr.toString()}`);
+  }
 }
 
 function isToday(value: string | null) {
